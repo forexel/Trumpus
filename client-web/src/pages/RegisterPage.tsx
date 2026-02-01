@@ -1,33 +1,35 @@
-import { FormEvent, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { login } from '../lib/api'
-import googleIcon from '../assets/google.svg'
+import { register } from '../lib/api'
 
-const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000/api/v1'
-
-export default function LoginPage() {
+export default function RegisterPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
-  async function onSubmit(e: FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (!email || !password) {
+    if (!email || !password || !confirm) {
       setError('Fill all fields')
+      return
+    }
+    if (password !== confirm) {
+      setError('Passwords do not match')
       return
     }
     try {
       setLoading(true)
-      const data = await login(email, password)
+      const data = await register(email, password)
       localStorage.setItem('client_token', data.token)
       localStorage.setItem('client_email', data.email)
       localStorage.setItem('client_id', data.client_id)
       navigate('/chats')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed')
+      setError(err instanceof Error ? err.message : 'Registration failed')
     } finally {
       setLoading(false)
     }
@@ -39,7 +41,7 @@ export default function LoginPage() {
       <div className="auth-content">
         <div className="auth-brand">Trumpus</div>
         <div className="auth-card">
-          <h1>Log in</h1>
+          <h1>Sign in</h1>
           <form onSubmit={onSubmit} className="form">
             <label>E-mail</label>
             <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="mail@gmail.com" />
@@ -50,26 +52,23 @@ export default function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter your password"
             />
+            <label>Confirm password</label>
+            <input
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              placeholder="Enter your password"
+            />
             {error ? <div className="error">{error}</div> : null}
-            <div className="auth-actions">
-              <button className="btn-primary" type="submit" disabled={loading}>
-                {loading ? 'Loading...' : 'Log in'}
+            <button className="btn-primary" type="submit">
+              {loading ? 'Loading...' : 'Sign In'}
+            </button>
+            <div className="auth-links">
+              <button type="button" className="linkish" onClick={() => navigate('/login')}>
+                Already got an account?
               </button>
-              <a
-                className="btn-google"
-                href={`${API_BASE}/auth/google/start?redirect=${encodeURIComponent(
-                  `${window.location.origin}/auth/google/callback`
-                )}`}
-              >
-                <img src={googleIcon} alt="" aria-hidden="true" />
-                Continue with Google
-              </a>
             </div>
           </form>
-          <div className="auth-links">
-            <a href="/forgot">Forgot password?</a>
-            <a href="/register">Sign up</a>
-          </div>
         </div>
       </div>
     </div>

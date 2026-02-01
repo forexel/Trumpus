@@ -100,3 +100,23 @@
   font-weight: 600;
   text-decoration: none;
 }
+
+.linkish {
+  background: none;
+  border: none;
+  color: #1e2a78;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.error {
+  margin-top: 10px;
+  color: #c82333;
+  font-size: 13px;
+}
+
+.hint {
+  margin-top: 10px;
+  color: #3c4a7a;
+  font-size: 13px;
+}
