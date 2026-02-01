@@ -29,6 +29,9 @@ export default function ChatDetailPage() {
   const [loading, setLoading] = useState(true)
   const [typing, setTyping] = useState(false)
   const [assistantDraft, setAssistantDraft] = useState('')
+  const [headerTitle, setHeaderTitle] = useState('New Chat')
+  const [headerTyping, setHeaderTyping] = useState(false)
+  const headerIntervalRef = useRef<number | null>(null)
   const navigate = useNavigate()
   const intervalRef = useRef<number | null>(null)
 
@@ -41,7 +44,13 @@ export default function ChatDetailPage() {
     setLoading(true)
     Promise.all([fetchChats(clientId), fetchMessages(chatId)])
       .then(([chatList, msgList]) => {
-        setChat(chatList.items.find((c) => c.id === chatId) ?? null)
+        const found = chatList.items.find((c) => c.id === chatId) ?? null
+        setChat(found)
+        if (found?.title) {
+          setHeaderTitle(found.title)
+        } else {
+          setHeaderTitle('New Chat')
+        }
         setMessages(msgList.items)
       })
       .finally(() => setLoading(false))
@@ -50,6 +59,7 @@ export default function ChatDetailPage() {
   useEffect(() => {
     return () => {
       if (intervalRef.current) window.clearInterval(intervalRef.current)
+      if (headerIntervalRef.current) window.clearInterval(headerIntervalRef.current)
     }
   }, [])
 
@@ -78,6 +88,32 @@ export default function ChatDetailPage() {
     }, 20)
   }
 
+  function startHeaderTransition(newTitle: string) {
+    if (headerIntervalRef.current) window.clearInterval(headerIntervalRef.current)
+    setHeaderTyping(true)
+    const from = headerTitle || 'New Chat'
+    let index = from.length
+    let phase: 'erase' | 'type' = 'erase'
+    headerIntervalRef.current = window.setInterval(() => {
+      if (phase === 'erase') {
+        index -= 1
+        setHeaderTitle(from.slice(0, Math.max(index, 0)))
+        if (index <= 0) {
+          phase = 'type'
+          index = 0
+        }
+        return
+      }
+      index += 1
+      setHeaderTitle(newTitle.slice(0, index))
+      if (index >= newTitle.length) {
+        if (headerIntervalRef.current) window.clearInterval(headerIntervalRef.current)
+        headerIntervalRef.current = null
+        setHeaderTyping(false)
+      }
+    }, 30)
+  }
+
   async function onSend() {
     if (!text.trim() || !chatId) return
     const content = text
@@ -87,7 +123,9 @@ export default function ChatDetailPage() {
     setChat((prev) => {
       if (!prev) return prev
       if (prev.title) return prev
-      return { ...prev, title: makeChatTitle(content) }
+      const newTitle = makeChatTitle(content)
+      startHeaderTransition(newTitle)
+      return { ...prev, title: newTitle }
     })
     setTyping(true)
     startTypewriter(DEMO_RESPONSE)
@@ -111,10 +149,10 @@ export default function ChatDetailPage() {
           ←
         </button>
         <div className="header-title header-chat">
-          {chat?.persona && PERSONA_AVATARS[chat.persona] ? (
+          {!headerTyping && chat?.persona && PERSONA_AVATARS[chat.persona] ? (
             <img className="header-avatar" src={PERSONA_AVATARS[chat.persona]} alt={chat.persona} />
           ) : null}
-          <span>{chat?.title || 'New Chat'}</span>
+          <span>{headerTitle}</span>
         </div>
         <div className="header-spacer" />
       </header>
