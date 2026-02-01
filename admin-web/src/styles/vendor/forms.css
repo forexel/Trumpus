@@ -1,0 +1,450 @@
+.form { display:flex; flex-direction:column; gap:16px; margin-top:8px; }
+.form-field { display:flex; flex-direction:column; gap:4px; }
+.field-head{ display:flex; align-items:center; justify-content:space-between; width:90%; margin:0 auto; min-height:18px; gap:8px; padding-left:12px; }
+.label{ display:block; width:90%; margin:0 auto; font-size:16px; color:#374151; padding-left:12px; }
+
+.input{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:90%;
+  margin: 0 auto 0; /* отступ сверху управляется gap у .form-field (4px) */
+  height:40px;
+  border-radius:12px;
+  border:1px solid #e5e7eb;
+  background:#fff;
+  padding:0 12px;
+  font-size:16px;
+  color:#111827;
+  outline:none;
+  box-sizing:border-box;
+}
+
+.input:focus{ border-color:#111827; box-shadow:0 0 0 3px rgba(17,24,39,.12); }
+
+.btn.btn-primary, .btn-primary{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:90%; height:36px;             /* тоньше ~20% */
+  margin: 12px auto 0;
+  border-radius:9999px; border:none;
+  background:#111827; color:#fff; font-weight:600; font-size:16px; cursor:pointer;
+}
+.btn.btn-primary:disabled, .btn-primary:disabled{ opacity:.6; cursor:default; }
+
+/* Secondary (gray) button */
+.btn.btn-secondary, .btn-secondary{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:90%; height:36px;
+  margin: 8px auto 0;
+  border-radius:9999px; border:none;
+  background:#e5e7eb; color:#111827; font-weight:600; font-size:16px; cursor:pointer;
+}
+
+/* Центрируем кнопки в модальных карточках оплаты/подписки */
+.card.auth-card .btn.btn-primary,
+.card.auth-card .btn.btn-secondary,
+.card.auth-card .btn-primary,
+.card.auth-card .btn-secondary{
+  margin-left: auto;
+  margin-right: auto;
+  align-self: center;
+}
+.btn.btn-secondary:disabled, .btn-secondary:disabled{ opacity:.6; cursor:default; }
+
+/* Центрирование контента для карточек оплаты */
+.auth-card--center{
+  text-align: center;
+}
+.auth-card--center .btn.btn-primary,
+.auth-card--center .btn.btn-secondary,
+.auth-card--center .btn-primary,
+.auth-card--center .btn-secondary{
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.auth-footer{
+  display:flex; flex-direction:column; align-items:center;
+  gap:14px; margin-top:12px; font-size:14px;
+  color:#111827; 
+}
+.auth-footer a{ color:#111827; font-weight:600; text-decoration:none; }
+.auth-footer a:hover{ text-decoration:underline; }
+
+.card.auth-card{
+  display: block;
+}
+.card.auth-card .form{
+  display: flex;
+  flex-direction: column;
+}
+
+.terms-row{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 90%;
+  margin: 0 auto;
+  font-size: 13px;
+  color: #111827;
+}
+
+.terms-row input{
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.terms-link{
+  color: #111827;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+textarea.input,
+.input.input-area {
+  display: block;
+  width: 90%;              /* как у input */
+  margin: 0 auto 0;        /* центрирование; отступ сверху = gap у .form-field */
+  height: auto;            /* убираем фиксированную высоту */
+  min-height: 120px;       /* комфортная высота */
+  padding: 12px 14px;      /* те же внутренние отступы, что и у .input */
+  line-height: 1.4;
+  resize: vertical;        /* оставляем возможность тянуть вниз */
+  box-sizing: border-box;
+}
+
+/* Wide variant: make fields span full card width */
+.form.form--wide .input,
+.form.form--wide .input.input-area,
+.form.form--wide textarea.input {
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+}
+.form.form--wide .label,
+.form.form--wide .field-head,
+.form.form--wide .error,
+.form.form--wide p[role="alert"].error {
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+}
+.form.form--wide .form-field > .error{
+  left: 0;      /* align with full-width inputs */
+  width: 100%;
+  padding-left: 12px; /* align with inner text */
+}
+
+/* единый шрифт для текстовых полей */
+.input,
+textarea.input,
+.input.input-area {
+  font-family: var(--font-ui);
+  font-weight: 400;
+  font-stretch: normal;
+  letter-spacing: normal;
+  line-height: 1.4;
+}
+
+/* плейсхолдеры — тоже одинаковые */
+.input::placeholder,
+textarea.input::placeholder,
+.input.input-area::placeholder {
+  font-family: var(--font-ui);
+  font-weight: 400;
+  font-size: 16px;
+  color: #9ca3af;
+  line-height: 1.4;
+}
+
+input.input, .input,
+textarea.input, .input.input-area {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Плавающий крестик на «синих» экранах (страницах-модалках) */
+.close-floating{
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  right: 12px;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff !important; /* белый крестик гарантированно */
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  z-index: 3000; /* поверх всего: меню/оверлеев */
+  pointer-events: auto;
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0;
+  line-height: 0;
+  background: transparent !important;
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+.close-floating:focus,
+.close-floating:focus-visible,
+.close-floating:active {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.close-floating-icon{
+  display:block;
+  width: 36px;
+  height: 36px;
+  overflow: visible;
+}
+.close-floating-icon, 
+.close-floating-icon *{
+  fill: #fff !important;
+  stroke: none !important;
+}
+
+/* Контейнер, чтобы позиционировать крестик по ширине контента */
+.modal-wrap{
+  position: relative;
+  width: 100%;
+  max-width: var(--popup-width); /* как у .card.auth-card */
+  margin: 0 auto;
+  padding-top: 44px; /* место под крестик внутри контейнера */
+}
+.modal-wrap.modal-wrap--ticket{
+  width: 100%;
+  max-width: var(--popup-width);
+  margin: 0 auto;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.modal-wrap.modal-wrap--wide{ max-width: var(--popup-width); }
+.modal-wrap.modal-wrap--no-close{ padding-top: 0; }
+.modal-wrap > .close-floating{
+  position: absolute;
+  top: 0; /* внутри отступа контейнера */
+  right: 0;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.ticket-create-title{
+  margin: 0;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.ticket-create-header{
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+.ticket-create-title{
+  grid-column: 2;
+}
+
+.ticket-create-spacer{
+  grid-column: 1;
+}
+
+.ticket-create-close{
+  grid-column: 3;
+  justify-self: end;
+}
+
+.modal-wrap--ticket .close-floating{
+  position: static;
+  top: auto;
+  right: auto;
+}
+
+.modal-wrap--ticket .card.auth-card{
+  max-width: var(--popup-width);
+  width: 100%;
+  margin: 4px auto 0;
+}
+
+/* Текст на экране успеха */
+.success-text{
+  margin: 8px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #374151; /* тёмно-серый в карточке */
+  text-align: center;
+}
+
+/* --- Error messages under inputs: same width & horizontal padding as inputs --- */
+/* Инлайновая ошибка справа от лейбла */
+.field-error-inline{
+  color:#ef4444;
+  font-size:12px;
+  line-height:1.3;
+  text-align:right;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  max-width:50%;
+}
+
+/* --- Ошибки под полями: ширина и отступы как у .input (90%) --- */
+
+.form-field { position: relative; } /* безопасно, если появится абсолютная позиция где-то */
+
+/* Блочная ошибка под полем (оставляем поддержку для старых экранов) */
+.form .error,
+.form-field .error,
+.form .helper.error,
+.field-error,
+.error-text,
+p[role="alert"].error {
+  display:block;
+  width:90%;
+  /* Fit exactly into the form-field gap without adding extra space */
+  margin:0 auto;
+  font-size:12px;
+  line-height:1.3;
+  color:#ef4444;
+  text-align:left;
+  box-sizing:border-box;
+}
+
+/* Place field error inside the inter-field gap (no layout shift) */
+.form-field{ position: relative; }
+.form-field > .error{
+  position: absolute;
+  left: 5%;               /* aligns with 90% width inputs */
+  width: 90%;
+  bottom: -16px;          /* sit in the inter-field space */
+  height: 16px;           /* enough for full descenders (e.g., "у") */
+  margin: 0;
+  font-size: 12px;        /* readable size */
+  line-height: 16px;      /* avoid baseline clipping */
+  color: #ef4444;
+  white-space: nowrap;
+  overflow: visible;      /* don't clip descenders */
+  text-overflow: clip;
+  pointer-events: none;   /* avoid accidental clicks/selection */
+}
+
+/* Подсветка поля с ошибкой (не расширяет разметку) */
+.input[aria-invalid="true"],
+.input.is-invalid,
+.input.invalid {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+}
+
+/* Для textarea те же правила */
+textarea.input[aria-invalid="true"],
+.input.input-area[aria-invalid="true"] {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+}
+
+/* Текст на экране успеха */
+.success-text{
+  margin: 8px 0 0;
+  font-size: 16px;         /* можно 14 → 16 для читабельности */
+  line-height: 1.45;
+  color: #374151;
+  text-align: center;
+}
+
+/* Контейнер для центровки кнопки */
+.success-actions{
+  display: flex;
+  justify-content: center;  /* по центру */
+}
+
+/* Сама кнопка внутри — ширина как у остальных в формах */
+.success-actions .btn-primary{
+  width: 90%;
+  max-width: 520px;         /* чтобы на широких экранах не расползалась */
+  margin: 12px auto 0;      /* центрируем */
+  display: inline-flex;     /* оставляем inline-flex, как у .btn */
+}
+
+.ticket-photos {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ticket-photo {
+  position: relative;
+  width: 96px;
+  height: 140px;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.ticket-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.ticket-photo button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: none;
+  background: rgba(0,0,0,.6);
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+  font-size: 14px;
+}
+
+.ticket-photo-add {
+  width: 96px;
+  height: 140px;
+  border: 2px solid #111827;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #111827;
+  cursor: pointer;
+}
+
+.ticket-photo-add input {
+  display: none;
+}
+
+.ticket-photo-add span {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.ticket-photo-add small{
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: center;
+}

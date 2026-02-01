@@ -1,0 +1,83 @@
+@import './vendor/style.css';
+@import './vendor/forms.css';
+@import './vendor/tickets.css';
+@import './auth.css';
+
+:root {
+  --bg: #ffffff;
+  --card: #ffffff;
+  --text: #1b1f2a;
+  --muted: #7b8794;
+  --primary: #1e2a78;
+  --border: #e3e7ef;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  color: var(--text);
+  background: #f7f7fb;
+}
+
+.app {
+  min-height: 100vh;
+  height: 100%;
+}
+
+/* Remove stray clearfix/after element from vendor styles */
+.app::after {
+  content: none !important;
+  display: none !important;
+}
+.app.auth-only .content {
+  padding: 0;
+  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  background: #0f163f;
+  color: #fff;
+}
+
+.topbar a { color: #cdd6ff; text-decoration: none; margin-left: 12px; }
+
+.content { padding: 20px; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  max-width: 420px;
+}
+
+label { display: block; margin-top: 12px; font-size: 14px; color: var(--muted); }
+input { width: 100%; padding: 10px; margin-top: 6px; border-radius: 8px; border: 1px solid var(--border); }
+button { margin-top: 12px; padding: 10px 14px; border-radius: 8px; border: none; background: var(--primary); color: #fff; cursor: pointer; }
+button.ghost { background: transparent; color: var(--primary); border: 1px solid var(--primary); }
+
+.links { display: flex; justify-content: space-between; margin-top: 12px; }
+
+.list { margin-top: 12px; }
+.list-item { padding: 10px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; text-decoration: none; color: inherit; display: block; }
+
+.chat { margin: 16px 0; display: grid; gap: 8px; }
+.msg { padding: 10px 12px; border-radius: 10px; max-width: 70%; }
+.msg.left { background: #eef2ff; }
+.msg.right { background: #e7f9ef; margin-left: auto; }
+.msg.loader { background: #fff4cc; }
+
+.composer { display: flex; gap: 8px; }
+.composer input { flex: 1; }

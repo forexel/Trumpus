@@ -1,0 +1,57 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    container_name: trumpus_db
+    environment:
+      POSTGRES_USER: trumpus
+      POSTGRES_PASSWORD: trumpus
+      POSTGRES_DB: trumpus
+    ports:
+      - "5433:5432"
+    volumes:
+      - trumpus_pgdata:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: trumpus_api
+    environment:
+      DATABASE_URL: postgresql://trumpus:trumpus@db:5432/trumpus?sslmode=disable
+      PORT: 8000
+      GOOGLE_CLIENT_ID: 813736117005-jm3t8ousstjbra6tcbe2hpi6khoeqhor.apps.googleusercontent.com
+      GOOGLE_CLIENT_SECRET: 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
+      GOOGLE_OAUTH_CALLBACK_URL: http://localhost:8000/api/v1/auth/google/callback
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+
+  admin-web:
+    build:
+      context: ./admin-web
+      dockerfile: Dockerfile
+    container_name: trumpus_admin_web
+    environment:
+      VITE_API_BASE: http://localhost:8000/api/v1
+    ports:
+      - "5174:5174"
+    depends_on:
+      - api
+
+  client-web:
+    build:
+      context: ./client-web
+      dockerfile: Dockerfile
+    container_name: trumpus_client_web
+    environment:
+      VITE_API_BASE: http://localhost:8000/api/v1
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+volumes:
+  trumpus_pgdata:
