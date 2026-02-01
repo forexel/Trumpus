@@ -20,6 +20,16 @@ Client app + admin panel + chat server.
 - `docs/` - Architecture, API, DB, decisions
 - `infra/` - Infra/scripts (future)
 
+## Current Behavior (MVP)
+
+- Client auth: email/password + Google OAuth (web)
+- Client chat list: shows only user’s chats
+- New chat: persona dropdown (Donald Trump / Barack Obama), title is first user message
+- Chat detail: user bubbles, LLM/admin bubbles with Markdown; typing indicator + typewriter effect
+- Admin: sees clients + chats, can reply to chat
+
+Note: user store is in-memory for now (Go server). Email sending for password reset is not connected yet.
+
 ## Local Dev (Docker)
 
 ```bash
@@ -75,6 +85,10 @@ Redirect URIs in Google Console:
 Client web login button uses:
 - `https://YOUR_DOMAIN/api/v1/auth/google/start?redirect=https://YOUR_DOMAIN/auth/google/callback`
 
+Local example:
+- Callback in Google Console: `http://localhost:8000/api/v1/auth/google/callback`
+- Client callback page: `http://localhost:5173/auth/google/callback`
+
 ## Architecture (Short)
 
 See `docs/ARCHITECTURE.md` for full details.
@@ -91,3 +105,11 @@ See `docs/ARCHITECTURE.md` for full details.
   - OR future `POST /api/v1/llm/respond` (to be added)
 
 See `docs/API.md` for current endpoints.
+
+## Assets
+
+Client assets live in `client-web/src/assets/`:
+- `auth-bg.png` (auth background)
+- `google.svg` (Google icon)
+- `eagle.png` (empty state)
+- `trump.png`, `obama.png` (persona avatars)

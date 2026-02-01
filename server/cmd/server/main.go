@@ -50,10 +50,16 @@ type Message struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type User struct {
+	Email    string `json:"email"`
+	Password string `json:"-"`
+}
+
 type Store struct {
 	mu       sync.Mutex
 	clients  map[string]*Client
 	emailIdx map[string]string
+	users    map[string]*User
 	chats    map[string]*Chat
 	messages map[string][]*Message
 }
@@ -75,6 +81,7 @@ func newStore() *Store {
 	s := &Store{
 		clients:  make(map[string]*Client),
 		emailIdx: make(map[string]string),
+		users:    make(map[string]*User),
 		chats:    make(map[string]*Chat),
 		messages: make(map[string][]*Message),
 	}
@@ -146,7 +153,10 @@ func seedStore(s *Store) {
 func (s *Store) getOrCreateClientByEmail(email string) *Client {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.getOrCreateClientByEmailLocked(email)
+}
 
+func (s *Store) getOrCreateClientByEmailLocked(email string) *Client {
 	if id, ok := s.emailIdx[email]; ok {
 		if client, exists := s.clients[id]; exists {
 			return client
@@ -158,6 +168,44 @@ func (s *Store) getOrCreateClientByEmail(email string) *Client {
 	s.clients[id] = client
 	s.emailIdx[email] = id
 	return client
+}
+
+func (s *Store) registerUser(email, password string) (*Client, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.users[email]; exists {
+		return nil, false
+	}
+
+	s.users[email] = &User{Email: email, Password: password}
+	client := s.getOrCreateClientByEmailLocked(email)
+	return client, true
+}
+
+func (s *Store) authenticateUser(email, password string) (*Client, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[email]
+	if !ok || user.Password != password {
+		return nil, false
+	}
+	client := s.getOrCreateClientByEmailLocked(email)
+	return client, true
+}
+
+func (s *Store) resetUserPassword(email, oldPassword, newPassword string) (*Client, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[email]
+	if !ok || user.Password != oldPassword {
+		return nil, false
+	}
+	user.Password = newPassword
+	client := s.getOrCreateClientByEmailLocked(email)
+	return client, true
 }
 
 func nextID(prefix string) string {
@@ -214,15 +262,10 @@ func main() {
 	}))
 
 	// Auth stubs
-	mux.HandleFunc("/api/v1/auth/login", withCORS(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, jsonMap{"token": "stub", "refresh": "stub"})
-	}))
-	mux.HandleFunc("/api/v1/auth/register", withCORS(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, jsonMap{"id": "stub"})
-	}))
-	mux.HandleFunc("/api/v1/auth/forgot-password", withCORS(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, jsonMap{"sent": true})
-	}))
+	mux.HandleFunc("/api/v1/auth/login", withCORS(handleClientLogin))
+	mux.HandleFunc("/api/v1/auth/register", withCORS(handleClientRegister))
+	mux.HandleFunc("/api/v1/auth/forgot-password", withCORS(handleClientForgot))
+	mux.HandleFunc("/api/v1/auth/reset-password", withCORS(handleClientReset))
 	mux.HandleFunc("/api/v1/auth/google/start", handleGoogleStart(googleCfg))
 	mux.HandleFunc("/api/v1/auth/google/callback", handleGoogleCallback(googleCfg))
 
@@ -420,6 +463,113 @@ func handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, jsonMap{"token": "admin-token"})
+}
+
+func handleClientLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
+		return
+	}
+	if req.Email == "" || req.Password == "" {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "email and password required"})
+		return
+	}
+	client, ok := store.authenticateUser(req.Email, req.Password)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "invalid credentials"})
+		return
+	}
+	writeJSON(w, http.StatusOK, jsonMap{
+		"token":     "client-token",
+		"email":     req.Email,
+		"client_id": client.ID,
+	})
+}
+
+func handleClientRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
+		return
+	}
+	if req.Email == "" || req.Password == "" {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "email and password required"})
+		return
+	}
+	client, ok := store.registerUser(req.Email, req.Password)
+	if !ok {
+		writeJSON(w, http.StatusConflict, jsonMap{"error": "user already exists"})
+		return
+	}
+	writeJSON(w, http.StatusOK, jsonMap{
+		"token":     "client-token",
+		"email":     req.Email,
+		"client_id": client.ID,
+	})
+}
+
+func handleClientForgot(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
+		return
+	}
+	if req.Email == "" {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "email required"})
+		return
+	}
+	writeJSON(w, http.StatusOK, jsonMap{"sent": true})
+}
+
+func handleClientReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		Email       string `json:"email"`
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
+		return
+	}
+	if req.Email == "" || req.OldPassword == "" || req.NewPassword == "" {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "email and passwords required"})
+		return
+	}
+	client, ok := store.resetUserPassword(req.Email, req.OldPassword, req.NewPassword)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "invalid credentials"})
+		return
+	}
+	writeJSON(w, http.StatusOK, jsonMap{
+		"token":     "client-token",
+		"email":     req.Email,
+		"client_id": client.ID,
+	})
 }
 
 func handleAdminClients(w http.ResponseWriter, r *http.Request) {
@@ -663,6 +813,11 @@ func handleClientChatCreate(w http.ResponseWriter, r *http.Request, clientID str
 		return
 	}
 
+	if strings.TrimSpace(req.Persona) == "" {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "persona required"})
+		return
+	}
+
 	chat := &Chat{
 		ID:            nextID("chat"),
 		ClientID:      clientID,
@@ -670,9 +825,7 @@ func handleClientChatCreate(w http.ResponseWriter, r *http.Request, clientID str
 		Persona:       strings.TrimSpace(req.Persona),
 		LastMessageAt: time.Now(),
 	}
-	if chat.Title == "" {
-		chat.Title = "New chat"
-	}
+	// Title can be filled from the first user message.
 	store.chats[chat.ID] = chat
 	store.messages[chat.ID] = []*Message{}
 
@@ -739,6 +892,20 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 	store.messages[chatID] = append(store.messages[chatID], msg)
 	chat.UnreadForAdmin++
 	chat.LastMessageAt = msg.CreatedAt
+	if strings.TrimSpace(chat.Title) == "" {
+		chat.Title = firstLine(req.Content, 60)
+	}
 
 	writeJSON(w, http.StatusCreated, msg)
+}
+
+func firstLine(text string, max int) string {
+	line := strings.TrimSpace(strings.Split(text, "\n")[0])
+	if line == "" {
+		return "New chat"
+	}
+	if len(line) > max {
+		return line[:max] + "…"
+	}
+	return line
 }
