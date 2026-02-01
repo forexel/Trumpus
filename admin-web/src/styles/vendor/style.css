@@ -1,0 +1,206 @@
+html, body, #root { 
+  height: 100%; 
+  background: #fff;
+}
+body { 
+  margin: 0;    
+  min-height: 100dvh; 
+  overflow-x: hidden; 
+  overflow-y: hidden; 
+  padding-top: env(safe-area-inset-top);
+}          /* вместо 100vh — корректно на мобилках */
+
+/* Покрас статуса/системной панели под брендовый цвет */
+body::before{
+  content: '';
+  position: fixed;
+  left: 0; right: 0; top: 0;
+  height: env(safe-area-inset-top);
+  background: var(--auth-bg, #3E8BBF);
+  z-index: 2000; /* над контентом, ниже плавающих кнопок */
+  pointer-events: none;
+}
+
+body{
+  display: block;       /* было display:flex — мешало */
+  place-items: initial; /* отключаем центровку body */
+}
+
+.app {
+  min-height: 100%;
+  background: #fff;               /* на всякий случай дубль */
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+/* Контент, чтобы не уезжал под нижнее фикс-меню */
+.app-content{
+  flex: 1 0 auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  width: 100%;
+  max-width: 100%;
+  padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + var(--vvb, 0px));
+  background: #fff;  /* важно: чтобы под меню не виднелся .page-blue */
+  /* фиксируем высоту области контента = высоте окна минус нижнее меню,
+     чтобы внутренние страницы прокручивались при переполнении и не уезжали под меню */
+  height: calc(100dvh - var(--nav-h) - env(safe-area-inset-bottom) - var(--vvb, 0px));
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+/* Если внутри пустой экран (.empty-state) — отключаем прокрутку контейнера, чтобы не «подпрыгивал» */
+.app-content:has(.empty-state){
+  overflow-y: hidden;
+}
+/* Для чатов — скролл внутри списка сообщений, шапка и контекст фиксированы */
+.app-content:has(.chat-page){
+  overflow-y: hidden;
+}
+/* Fallback for browsers without :has support */
+.app-content.app-content--no-scroll{
+  overflow-y: hidden;
+}
+
+/* Без нижнего меню: используем всю высоту и убираем подложку */
+.app--no-nav .app-content{
+  padding-bottom: env(safe-area-inset-bottom);
+  height: 100dvh;
+}
+.app--no-nav::after{ display: none; }
+
+:root{
+  --auth-bg: #3E8BBF;   /* твой новый фон */
+  --accent:  #62B7FF;
+  --text-dark: #111827;
+  --text-light: #ffffff;
+  --border: #e5e7eb;
+  --content-max: 375px; 
+  --nav-h: 56px;   
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+  --popup-width: 320px;
+  --popup-height: min(520px, calc(100dvh - 160px));
+  --popup-radius: 22px;
+}
+
+
+.page-blue{
+  min-height: 100dvh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  /* Учитываем верхний вырез/статус-бар и нижнюю жестовую панель */
+  padding: calc(env(safe-area-inset-top) + 28px) 20px calc(env(safe-area-inset-bottom) + var(--vvb, 0px) + 20px);
+  background: var(--auth-bg);
+  box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: hidden; /* чтобы не было 1px «протечки» справа */
+  -webkit-overflow-scrolling: touch;
+}
+
+.page-blue.page-blue--ticket{
+  align-items: stretch;
+  padding-top: calc(env(safe-area-inset-top) + 8px);
+  padding-left: 12px;
+  padding-right: 12px;
+  padding-bottom: calc(env(safe-area-inset-bottom) + var(--vvb, 0px) + 16px);
+}
+
+.page-blue--payment{
+  padding-top: calc(env(safe-area-inset-top) + 12px);
+}
+
+/* большой белый заголовок наверху */
+.auth-hero-title{
+  margin:0 0 12px 0;        /* ещё компактнее */
+  font-size: 34px;          /* чуть меньше, чтобы всё влезало */
+  font-weight:700;
+  line-height:1.2;
+  color: var(--text-light);
+  text-align:center;
+}
+
+.auth-hero-title--payment{
+  margin:0 0 14px 0;
+  font-size: 28px;
+}
+
+/* белая «карточка» формы */
+.card.auth-card{
+  width:100%;
+  max-width:var(--popup-width);          /* «мобильная» ширина */
+  background:#ffffff;
+  border-radius:var(--popup-radius);
+  box-shadow:0 18px 40px rgba(0,0,0,.15);
+  padding:16px 12px;        /* ещё компактнее */
+  margin: 4px 6px 0;        /* подняли карточку ближе к заголовку */
+  box-sizing:border-box;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  overflow: visible;
+}
+
+/* голубой заголовок внутри карточки */
+.card-title{
+  margin:0 0 12px 0;
+  font-size:20px;
+  font-weight:700;
+  color: var(--accent);
+  text-align:center;
+}
+
+/* 390–393px (iPhone 12/13/14) — растягиваем колонку */
+@media (min-width: 390px){ :root{ --content-max: 390px; } }
+@media (min-width: 414px){ :root{ --content-max: 414px; } }
+@media (min-width: 430px){ :root{ --content-max: 430px; } }
+
+/* чтобы на браузерах с svh работало идеально */
+@supports (height: 100svh){
+    .app-content{
+      min-height: calc(100svh - var(--nav-h) - env(safe-area-inset-bottom));}
+    body{ min-height: 100svh; }
+    .page-blue{ min-height: 100svh; }
+}
+
+
+/* у карточки небольшой нижний «зазор», чтоб не прилипала к краю */
+.card.auth-card{
+  margin-bottom: 24px;   /* добавить к твоим существующим свойствам */
+}
+
+.app::after{
+  content: '';
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--nav-h) + env(safe-area-inset-bottom) + 2px);
+  background: #fff;
+  z-index: 999;          /* ниже меню (у меню 1000) */
+  pointer-events: none;
+}
+
+.app-content > *:last-child{ margin-bottom: 0 !important; }
+.page-blue   > *:last-child{ margin-bottom: 0 !important; }
+
+html, body, input, textarea, button, select {
+  font-family: var(--font-ui);
+  font-weight: 400;
+  font-stretch: normal;   /* страховка от «узкого» начертания */
+  letter-spacing: normal;
+  font-kerning: normal;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.app-content > .page-white,
+.app-content > .page-blue {
+  flex: 0 0 100%;
+  width: 100%;
+  min-width: 0;  /* чтобы flex не сжимал/не давал минималки */
+}
