@@ -2,22 +2,30 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { fetchChats, fetchMessages, getClientId, sendMessage, Message, ChatSummary } from '../lib/api'
-import trumpAvatar from '../assets/trump.png'
-import obamaAvatar from '../assets/obama.png'
+import { fetchChats, fetchMessages, getClientId, sendMessage, getAIResponse, saveAIMessage, updateChatTitle, Message, ChatSummary } from '../lib/api'
+import { PERSONAS } from './NewChatPage'
 
-const PERSONA_AVATARS: Record<string, string> = {
-  'Donald Trump': trumpAvatar,
-  'Barack Obama': obamaAvatar,
+// Get persona data by name
+function getPersonaByName(name: string) {
+  return PERSONAS.find(p => p.name === name) || null
 }
 
-const DEMO_RESPONSE = `Ок, понял. Давайте так:\n\n- Сначала уточним детали\n- Потом предложу решение\n\nЕсли нужно — распишу пошагово.`
+// Generate initials for placeholder avatar
+function getInitials(name: string): string {
+  return name.split(' ').map(w => w[0]).join('').toUpperCase()
+}
 
 function makeChatTitle(text: string, limit = 36) {
   const cleaned = text.replace(/\s+/g, ' ').trim()
   if (!cleaned) return 'New Chat'
   if (cleaned.length <= limit) return cleaned
   return `${cleaned.slice(0, limit - 1)}…`
+}
+
+// Format time for message
+function formatTime(dateStr: string): string {
+  const date = new Date(dateStr)
+  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 export default function ChatDetailPage() {
@@ -29,11 +37,11 @@ export default function ChatDetailPage() {
   const [loading, setLoading] = useState(true)
   const [typing, setTyping] = useState(false)
   const [assistantDraft, setAssistantDraft] = useState('')
-  const [headerTitle, setHeaderTitle] = useState('New Chat')
-  const [headerTyping, setHeaderTyping] = useState(false)
-  const headerIntervalRef = useRef<number | null>(null)
   const navigate = useNavigate()
   const intervalRef = useRef<number | null>(null)
+  const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  const pendingAIRef = useRef(false)
 
   useEffect(() => {
     const clientId = getClientId()
@@ -46,11 +54,6 @@ export default function ChatDetailPage() {
       .then(([chatList, msgList]) => {
         const found = chatList.items.find((c) => c.id === chatId) ?? null
         setChat(found)
-        if (found?.title) {
-          setHeaderTitle(found.title)
-        } else {
-          setHeaderTitle('New Chat')
-        }
         setMessages(msgList.items)
       })
       .finally(() => setLoading(false))
@@ -59,132 +62,144 @@ export default function ChatDetailPage() {
   useEffect(() => {
     return () => {
       if (intervalRef.current) window.clearInterval(intervalRef.current)
-      if (headerIntervalRef.current) window.clearInterval(headerIntervalRef.current)
     }
   }, [])
 
-  function startTypewriter(fullText: string) {
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, assistantDraft])
+
+  // Focus input on mount
+  useEffect(() => {
+    if (!loading) {
+      inputRef.current?.focus()
+    }
+  }, [loading])
+
+  function startTypewriter(fullText: string, aiMsg: Message) {
     setAssistantDraft('')
     let index = 0
+    const speed = Math.max(10, Math.min(30, 1500 / fullText.length)) // Adaptive speed
     intervalRef.current = window.setInterval(() => {
       index += 2
       setAssistantDraft(fullText.slice(0, index))
       if (index >= fullText.length) {
         if (intervalRef.current) window.clearInterval(intervalRef.current)
         intervalRef.current = null
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `ai_${Date.now()}`,
-            chat_id: chatId,
-            sender: 'admin',
-            content: fullText,
-            created_at: new Date().toISOString(),
-          },
-        ])
         setAssistantDraft('')
+        setMessages(prev => {
+          if (prev.some(m => m.id === aiMsg.id)) return prev
+          return [...prev, aiMsg]
+        })
         setTyping(false)
+        pendingAIRef.current = false
       }
-    }, 20)
-  }
-
-  function startHeaderTransition(newTitle: string) {
-    if (headerIntervalRef.current) window.clearInterval(headerIntervalRef.current)
-    setHeaderTyping(true)
-    const from = headerTitle || 'New Chat'
-    let index = from.length
-    let phase: 'erase' | 'type' = 'erase'
-    headerIntervalRef.current = window.setInterval(() => {
-      if (phase === 'erase') {
-        index -= 1
-        setHeaderTitle(from.slice(0, Math.max(index, 0)))
-        if (index <= 0) {
-          phase = 'type'
-          index = 0
-        }
-        return
-      }
-      index += 1
-      setHeaderTitle(newTitle.slice(0, index))
-      if (index >= newTitle.length) {
-        if (headerIntervalRef.current) window.clearInterval(headerIntervalRef.current)
-        headerIntervalRef.current = null
-        setHeaderTyping(false)
-      }
-    }, 30)
+    }, speed)
   }
 
   async function onSend() {
-    if (!text.trim() || !chatId) return
+    if (!text.trim() || !chatId || typing || pendingAIRef.current) return
     const content = text
     setText('')
+    pendingAIRef.current = true
+    
     const msg = await sendMessage(chatId, content)
-    setMessages((prev) => [...prev, msg])
-    setChat((prev) => {
-      if (!prev) return prev
-      if (prev.title) return prev
+    const updatedMessages = [...messages, msg]
+    setMessages(updatedMessages)
+    
+    // Update title if first message
+    if (!chat?.title) {
       const newTitle = makeChatTitle(content)
-      startHeaderTransition(newTitle)
-      return { ...prev, title: newTitle }
-    })
+      updateChatTitle(chatId, newTitle)
+      setChat(prev => prev ? { ...prev, title: newTitle } : prev)
+    }
+    
+    // Get AI response
     setTyping(true)
-    startTypewriter(DEMO_RESPONSE)
+    try {
+      const persona = chat?.persona || 'Donald Trump'
+      const aiResponse = await getAIResponse(persona, updatedMessages)
+      const aiMsg = saveAIMessage(chatId, aiResponse)
+      startTypewriter(aiResponse, aiMsg)
+    } catch (error) {
+      console.error('Failed to get AI response:', error)
+      setTyping(false)
+      pendingAIRef.current = false
+      // Show error as a message
+      const errorContent = "⚠️ Server is busy. Please try again in a moment."
+      const errorMsg = saveAIMessage(chatId, errorContent)
+      setMessages(prev => [...prev, errorMsg])
+    }
   }
 
   const markdownComponents = useMemo(
     () => ({
-      p: ({ children }: { children: React.ReactNode }) => <p className="bubble-text">{children}</p>,
-      ul: ({ children }: { children: React.ReactNode }) => <ul className="bubble-list">{children}</ul>,
-      ol: ({ children }: { children: React.ReactNode }) => <ol className="bubble-list">{children}</ol>,
-      li: ({ children }: { children: React.ReactNode }) => <li>{children}</li>,
-      strong: ({ children }: { children: React.ReactNode }) => <strong className="bubble-strong">{children}</strong>,
+      p: ({ children }: { children?: React.ReactNode }) => <p className="bubble-text">{children}</p>,
+      ul: ({ children }: { children?: React.ReactNode }) => <ul className="bubble-list">{children}</ul>,
+      ol: ({ children }: { children?: React.ReactNode }) => <ol className="bubble-list">{children}</ol>,
+      li: ({ children }: { children?: React.ReactNode }) => <li>{children}</li>,
+      strong: ({ children }: { children?: React.ReactNode }) => <strong className="bubble-strong">{children}</strong>,
     }),
     []
   )
 
+  const persona = chat?.persona ? getPersonaByName(chat.persona) : null
+  const displayTitle = chat?.title || (persona ? persona.name : 'New Chat')
+
   return (
-    <div className="mobile-page">
-      <header className="mobile-header">
+    <div className="mobile-page chat-page">
+      <header className="mobile-header chat-header">
         <button className="back-btn" onClick={() => navigate('/chats')} aria-label="Back">
-          ←
+          ‹
         </button>
         <div className="header-title header-chat">
-          {!headerTyping && chat?.persona && PERSONA_AVATARS[chat.persona] ? (
-            <img className="header-avatar" src={PERSONA_AVATARS[chat.persona]} alt={chat.persona} />
+          {persona ? (
+            persona.avatar ? (
+              <img className="header-avatar" src={persona.avatar} alt={persona.name} />
+            ) : (
+              <span className="header-avatar header-avatar-placeholder" style={{ backgroundColor: persona.color }}>
+                {getInitials(persona.name)}
+              </span>
+            )
           ) : null}
-          <span>{headerTitle}</span>
+          <div className="header-info">
+            <span className="header-name">{displayTitle}</span>
+            <span className={`header-status ${typing ? 'typing' : ''}`}>
+              {typing ? 'typing...' : 'online'}
+            </span>
+          </div>
         </div>
         <div className="header-spacer" />
       </header>
 
-      <main className="mobile-content chat-view">
-        <div className="chat-head">
-          <div className="avatar">
-            {chat?.persona && PERSONA_AVATARS[chat.persona] ? (
-              <img src={PERSONA_AVATARS[chat.persona]} alt={chat.persona} />
-            ) : (
-              <span>{chat?.persona?.[0] ?? 'AI'}</span>
-            )}
-          </div>
-          <div className="chat-head-title">{chat?.title || 'Chat'}</div>
-        </div>
-
+      <main className="chat-messages">
         {loading ? (
           <div className="loading-text">Loading...</div>
         ) : (
           <div className="bubble-list-wrap">
+            {messages.length === 0 && !typing && (
+              <div className="empty-chat-hint">
+                <p>Start chatting with {persona?.name || 'your AI friend'}!</p>
+              </div>
+            )}
             {messages.map((m) => (
               <div key={m.id} className={`bubble ${m.sender === 'client' ? 'user' : 'ai'}`}>
                 {m.sender === 'client' ? (
-                  <div className="bubble-text">{m.content}</div>
+                  <>
+                    <div className="bubble-text">{m.content}</div>
+                    <div className="bubble-time">{formatTime(m.created_at)}</div>
+                  </>
                 ) : (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                    {m.content}
-                  </ReactMarkdown>
+                  <>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                      {m.content}
+                    </ReactMarkdown>
+                    <div className="bubble-time">{formatTime(m.created_at)}</div>
+                  </>
                 )}
               </div>
             ))}
-            {typing ? (
+            {typing && (
               <div className="bubble ai">
                 {assistantDraft ? (
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
@@ -198,21 +213,30 @@ export default function ChatDetailPage() {
                   </div>
                 )}
               </div>
-            ) : null}
+            )}
+            <div ref={messagesEndRef} />
           </div>
         )}
-
-        <div className="composer floating">
-          <input
-            placeholder="Ask me something"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-          />
-          <button className="send-btn" onClick={onSend}>
-            ↑
-          </button>
-        </div>
       </main>
+
+      <div className="composer-bottom">
+        <input
+          ref={inputRef}
+          placeholder="Type a message..."
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && onSend()}
+          disabled={typing}
+        />
+        <button 
+          className="send-btn" 
+          onClick={onSend} 
+          disabled={!text.trim() || typing}
+          aria-label="Send"
+        >
+          ➤
+        </button>
+      </div>
     </div>
   )
 }

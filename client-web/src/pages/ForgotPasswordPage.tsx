@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { forgotPassword } from '../lib/api'
 
 export default function ForgotPasswordPage() {
@@ -7,7 +7,6 @@ export default function ForgotPasswordPage() {
   const [error, setError] = useState('')
   const [sent, setSent] = useState(false)
   const [loading, setLoading] = useState(false)
-  const navigate = useNavigate()
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -39,15 +38,15 @@ export default function ForgotPasswordPage() {
             <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="mail@gmail.com" />
             {error ? <div className="error">{error}</div> : null}
             {sent ? <div className="hint">Check your email for the reset link.</div> : null}
-            <button className="btn-primary" type="submit" disabled={loading}>
-              {loading ? 'Sending...' : 'Send e-mail'}
-            </button>
-            <div className="auth-links">
-              <button type="button" className="linkish" onClick={() => navigate('/login')}>
-                Log in
+            <div className="auth-actions">
+              <button className="btn-primary" type="submit" disabled={loading}>
+                {loading ? 'Sending...' : 'Send e-mail'}
               </button>
             </div>
           </form>
+          <div className="auth-links">
+            <Link to="/login">Log in</Link>
+          </div>
         </div>
       </div>
     </div>

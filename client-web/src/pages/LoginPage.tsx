@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { login } from '../lib/api'
 import googleIcon from '../assets/google.svg'
 
@@ -37,9 +37,11 @@ export default function LoginPage() {
     <div className="auth-screen">
       <div className="auth-overlay" />
       <div className="auth-content">
-        <div className="auth-brand">Trumpus</div>
+        <div className="auth-brand">
+          <span className="auth-brand-text">Trumpus</span>
+        </div>
         <div className="auth-card">
-          <h1>Log in</h1>
+          <h1>Welcome Back</h1>
           <form onSubmit={onSubmit} className="form">
             <label>E-mail</label>
             <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="mail@gmail.com" />
@@ -53,8 +55,9 @@ export default function LoginPage() {
             {error ? <div className="error">{error}</div> : null}
             <div className="auth-actions">
               <button className="btn-primary" type="submit" disabled={loading}>
-                {loading ? 'Loading...' : 'Log in'}
+                {loading ? 'Signing in...' : 'Sign In'}
               </button>
+              <div className="auth-divider">or</div>
               <a
                 className="btn-google"
                 href={`${API_BASE}/auth/google/start?redirect=${encodeURIComponent(
@@ -67,8 +70,8 @@ export default function LoginPage() {
             </div>
           </form>
           <div className="auth-links">
-            <a href="/forgot">Forgot password?</a>
-            <a href="/register">Sign up</a>
+            <Link to="/forgot">Forgot password?</Link>
+            <Link to="/register">Create account</Link>
           </div>
         </div>
       </div>
