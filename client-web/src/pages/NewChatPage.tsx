@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createChat, getClientId, sendMessage } from '../lib/api'
+import { useTheme } from '../lib/useTheme'
 import trumpAvatar from '../assets/trump.png'
 import obamaAvatar from '../assets/obama.png'
+import eagleIcon from '../assets/eagle.png'
 
 // Available personas for selection
 export const PERSONAS = [
@@ -74,6 +76,7 @@ export default function NewChatPage() {
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
+  const { theme, toggleTheme } = useTheme()
 
   const clientId = useMemo(() => getClientId(), [])
 
@@ -151,17 +154,38 @@ export default function NewChatPage() {
             <path d="M19 12H5M12 19l-7-7 7-7"/>
           </svg>
         </button>
+        <span className="header-flag">🇺🇸</span>
         <div className="header-center">
           <div className="header-title">New Chat</div>
           <div className="header-subtitle">Select a persona to start</div>
         </div>
-        <div className="header-spacer" />
+        <span className="header-flag">🇺🇸</span>
+        <button className="theme-toggle" onClick={toggleTheme} title={theme === 'dark' ? 'Light mode' : 'Dark mode'}>
+          {theme === 'dark' ? (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="5"/>
+              <line x1="12" y1="1" x2="12" y2="3"/>
+              <line x1="12" y1="21" x2="12" y2="23"/>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+              <line x1="1" y1="12" x2="3" y2="12"/>
+              <line x1="21" y1="12" x2="23" y2="12"/>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+            </svg>
+          ) : (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+          )}
+        </button>
       </header>
 
       <main className="mobile-content new-chat-content">
         <div className="section-header">
-          <span className="section-icon">🌟</span>
+          <span className="section-icon">🇺🇸</span>
           <span>Choose Your Companion</span>
+          <span className="section-icon">🇺🇸</span>
         </div>
         
         <div className="persona-grid">
@@ -189,18 +213,12 @@ export default function NewChatPage() {
             disabled={!selectedPersona || loading}
           />
           <button 
-            className="send-btn" 
+            className="send-btn eagle-btn" 
             onClick={onSend} 
             disabled={!selectedPersona || loading}
             title={selectedPersona ? `Start chat with ${selectedPersona.name}` : 'Select a persona first'}
           >
-            {loading ? (
-              <div className="send-spinner" />
-            ) : (
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
-              </svg>
-            )}
+            <img src={eagleIcon} alt="Send" className={`eagle-send-icon ${loading ? 'flying' : ''}`} />
           </button>
         </div>
         <div className="composer-hint">

@@ -3,20 +3,54 @@
 @import './vendor/tickets.css';
 @import './auth.css';
 
-:root {
+/* Dark Theme (default) */
+:root, [data-theme="dark"] {
   --bg: #0a0a0a;
   --bg-secondary: #111111;
   --card: #1a1a1a;
   --text: #ffffff;
   --text-secondary: #a0a0a0;
   --muted: #666666;
-  --primary: #3b82f6;
-  --primary-hover: #2563eb;
+  --primary: #BF0A30;
+  --primary-hover: #8B0000;
+  --secondary: #002868;
   --border: #2a2a2a;
-  --bubble-user: #3b82f6;
-  --bubble-ai: #1e1e1e;
+  --bubble-user: #BF0A30;
+  --bubble-ai: #002868;
   --success: #22c55e;
   --error: #ef4444;
+  --usa-red: #BF0A30;
+  --usa-blue: #002868;
+  --usa-white: #ffffff;
+  --input-bg: #1a1a1a;
+  --input-text: #ffffff;
+  --header-bg: #111111;
+  --shadow: rgba(0, 0, 0, 0.5);
+}
+
+/* Light Theme */
+[data-theme="light"] {
+  --bg: #f5f5f5;
+  --bg-secondary: #ffffff;
+  --card: #ffffff;
+  --text: #1a1a1a;
+  --text-secondary: #555555;
+  --muted: #888888;
+  --primary: #BF0A30;
+  --primary-hover: #8B0000;
+  --secondary: #002868;
+  --border: #e0e0e0;
+  --bubble-user: #BF0A30;
+  --bubble-ai: #002868;
+  --success: #16a34a;
+  --error: #dc2626;
+  --usa-red: #BF0A30;
+  --usa-blue: #002868;
+  --usa-white: #ffffff;
+  --input-bg: #ffffff;
+  --input-text: #1a1a1a;
+  --header-bg: #ffffff;
+  --shadow: rgba(0, 0, 0, 0.1);
 }
 
 * { box-sizing: border-box; }
@@ -110,15 +144,23 @@ body {
 
 .logo-emoji {
   font-size: 26px;
+  animation: flagPulse 2s ease-in-out infinite;
+}
+
+@keyframes flagPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
 }
 
 .logo-text {
   font-weight: 700;
   font-size: 22px;
-  background: linear-gradient(135deg, var(--primary), #8b5cf6);
+  background: linear-gradient(180deg, var(--usa-red), #fff, var(--usa-blue));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  text-transform: uppercase;
+  letter-spacing: -0.5px;
 }
 
 .header-actions {
@@ -177,6 +219,11 @@ body {
 
 .header-spacer { width: 48px; }
 
+.header-flag {
+  font-size: 20px;
+  margin-left: 4px;
+}
+
 .logout-btn {
   background: transparent;
   color: var(--text-secondary);
@@ -196,6 +243,39 @@ body {
   color: var(--text);
 }
 
+/* Theme Toggle Button - Apple Style */
+.theme-toggle {
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.theme-toggle:hover {
+  background: var(--card);
+  color: var(--text);
+}
+
+.theme-toggle:active {
+  transform: scale(0.95);
+}
+
+.theme-toggle svg {
+  transition: transform 0.2s ease;
+}
+
+.theme-toggle:hover svg {
+  transform: scale(1.1);
+}
+
 .loading-spinner {
   width: 40px;
   height: 40px;
@@ -204,6 +284,84 @@ body {
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 16px;
+}
+
+/* ============================================
+   EAGLE - Loader & Send Button
+   ============================================ */
+.eagle-loader {
+  width: 80px;
+  height: 80px;
+  animation: eagleFly 1.5s ease-in-out infinite;
+  filter: drop-shadow(0 4px 12px rgba(191, 10, 48, 0.4));
+}
+
+@keyframes eagleFly {
+  0%, 100% { 
+    transform: translateY(0) rotate(0deg) scale(1); 
+  }
+  25% { 
+    transform: translateY(-15px) rotate(-5deg) scale(1.05); 
+  }
+  50% { 
+    transform: translateY(-5px) rotate(5deg) scale(1.1); 
+  }
+  75% { 
+    transform: translateY(-20px) rotate(-3deg) scale(1.05); 
+  }
+}
+
+.eagle-btn {
+  background: linear-gradient(135deg, var(--usa-red), #8B0000) !important;
+  border: none !important;
+  box-shadow: 0 4px 12px rgba(191, 10, 48, 0.4) !important;
+  padding: 10px !important;
+  border-radius: 50% !important;
+  width: 48px !important;
+  height: 48px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.eagle-btn:hover {
+  background: linear-gradient(135deg, #D50032, var(--usa-red)) !important;
+  box-shadow: 0 6px 16px rgba(191, 10, 48, 0.5) !important;
+  transform: scale(1.05);
+}
+
+.eagle-send-icon {
+  width: 28px;
+  height: 28px;
+  transition: all 0.3s ease;
+  filter: invert(1) brightness(2) drop-shadow(1px 1px 2px rgba(0, 0, 0, 0.3));
+}
+
+.eagle-send-icon:hover {
+  transform: scale(1.1) rotate(-5deg);
+}
+
+.eagle-send-icon.flying {
+  animation: eagleSend 0.6s ease-in-out infinite;
+}
+
+@keyframes eagleSend {
+  0%, 100% { 
+    transform: translateX(0) rotate(0deg); 
+  }
+  50% { 
+    transform: translateX(5px) translateY(-3px) rotate(10deg); 
+  }
+}
+
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 16px;
+  color: var(--text-secondary);
 }
 
 .retry-btn {
@@ -535,7 +693,7 @@ body {
 .bubble.ai {
   align-self: flex-start;
   background: var(--bubble-ai);
-  color: var(--text);
+  color: #ffffff;
   border-bottom-left-radius: 6px;
   border: 1px solid var(--border);
 }
@@ -631,8 +789,8 @@ body {
 }
 
 .composer-bottom input:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+  border-color: var(--usa-red);
+  box-shadow: 0 0 0 3px rgba(191, 10, 48, 0.2);
 }
 
 .send-btn {
@@ -640,7 +798,7 @@ body {
   height: 48px;
   border-radius: 50%;
   border: none;
-  background: var(--primary);
+  background: linear-gradient(135deg, var(--usa-red), #8B0000);
   color: #fff;
   font-size: 20px;
   cursor: pointer;
@@ -649,11 +807,13 @@ body {
   justify-content: center;
   transition: all 0.2s;
   flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(191, 10, 48, 0.3);
 }
 
 .send-btn:hover {
-  background: var(--primary-hover);
+  background: linear-gradient(135deg, #D50032, var(--usa-red));
   transform: scale(1.05);
+  box-shadow: 0 6px 16px rgba(191, 10, 48, 0.4);
 }
 
 .send-btn:active {
@@ -947,13 +1107,14 @@ button.ghost:hover {
 .selected-banner {
   margin-top: 16px;
   padding: 12px 16px;
-  background: linear-gradient(135deg, var(--primary), #8b5cf6);
+  background: linear-gradient(135deg, var(--usa-red), var(--usa-blue));
   border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   font-size: 14px;
   animation: slideUp 0.3s ease;
+  border: 2px solid #fff;
 }
 
 @keyframes slideUp {
@@ -1160,15 +1321,15 @@ button.ghost:hover {
   width: 60px;
   height: 60px;
   border-radius: 50%;
-  background: var(--primary);
+  background: linear-gradient(135deg, var(--usa-red), #8B0000);
   color: #fff;
-  border: none;
+  border: 3px solid var(--usa-blue);
   cursor: pointer;
   font-size: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4);
+  box-shadow: 0 4px 20px rgba(191, 10, 48, 0.4);
   transition: all 0.3s;
   margin: 0;
   padding: 0;
@@ -1176,10 +1337,54 @@ button.ghost:hover {
 
 .new-chat-btn:hover {
   transform: scale(1.1);
-  box-shadow: 0 6px 30px rgba(59, 130, 246, 0.5);
+  box-shadow: 0 6px 30px rgba(191, 10, 48, 0.5);
+  background: linear-gradient(135deg, #D50032, var(--usa-red));
 }
 
 .new-chat-btn svg {
   width: 28px;
   height: 28px;
+}
+
+/* ============================================
+   LIGHT THEME SPECIFIC OVERRIDES
+   ============================================ */
+[data-theme="light"] .mobile-header {
+  background: var(--header-bg);
+  box-shadow: 0 1px 3px var(--shadow);
+}
+
+[data-theme="light"] .chat-list-item {
+  background: var(--card);
+}
+
+[data-theme="light"] .chat-list-item:hover {
+  background: #f0f0f0;
+}
+
+[data-theme="light"] .message-input-area {
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+}
+
+[data-theme="light"] .message-input {
+  background: var(--input-bg);
+  color: var(--input-text);
+  border: 1px solid var(--border);
+}
+
+[data-theme="light"] .persona-card {
+  background: var(--card);
+  box-shadow: 0 2px 8px var(--shadow);
+}
+
+[data-theme="light"] .persona-card:hover {
+  box-shadow: 0 4px 16px var(--shadow);
+}
+
+[data-theme="light"] .logo-text {
+  background: linear-gradient(180deg, var(--usa-red), #333, var(--usa-blue));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }

@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { login } from '../lib/api'
 import googleIcon from '../assets/google.svg'
+import eagleIcon from '../assets/eagle.png'
 
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000/api/v1'
 
@@ -37,6 +38,7 @@ export default function LoginPage() {
     <div className="auth-screen">
       <div className="auth-overlay" />
       <div className="auth-content">
+        <img src={eagleIcon} alt="Eagle" className="auth-eagle" />
         <div className="auth-brand">
           <span className="auth-brand-text">Trumpus</span>
         </div>

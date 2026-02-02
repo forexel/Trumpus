@@ -3,7 +3,9 @@ import { useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { fetchChats, fetchMessages, getClientId, sendMessage, getAIResponse, saveAIMessage, updateChatTitle, Message, ChatSummary } from '../lib/api'
+import { useTheme } from '../lib/useTheme'
 import { PERSONAS } from './NewChatPage'
+import eagleIcon from '../assets/eagle.png'
 
 // Get persona data by name
 function getPersonaByName(name: string) {
@@ -42,6 +44,7 @@ export default function ChatDetailPage() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const pendingAIRef = useRef(false)
+  const { theme, toggleTheme } = useTheme()
 
   useEffect(() => {
     const clientId = getClientId()
@@ -150,8 +153,11 @@ export default function ChatDetailPage() {
     <div className="mobile-page chat-page">
       <header className="mobile-header chat-header">
         <button className="back-btn" onClick={() => navigate('/chats')} aria-label="Back">
-          ‹
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
         </button>
+        <span className="header-flag">🇺🇸</span>
         <div className="header-title header-chat">
           {persona ? (
             persona.avatar ? (
@@ -169,12 +175,33 @@ export default function ChatDetailPage() {
             </span>
           </div>
         </div>
-        <div className="header-spacer" />
+        <button className="theme-toggle" onClick={toggleTheme} title={theme === 'dark' ? 'Light mode' : 'Dark mode'}>
+          {theme === 'dark' ? (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="5"/>
+              <line x1="12" y1="1" x2="12" y2="3"/>
+              <line x1="12" y1="21" x2="12" y2="23"/>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+              <line x1="1" y1="12" x2="3" y2="12"/>
+              <line x1="21" y1="12" x2="23" y2="12"/>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+            </svg>
+          ) : (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+          )}
+        </button>
       </header>
 
       <main className="chat-messages">
         {loading ? (
-          <div className="loading-text">Loading...</div>
+          <div className="loading-state">
+            <img src={eagleIcon} alt="Loading" className="eagle-loader" />
+            <span>Loading...</span>
+          </div>
         ) : (
           <div className="bubble-list-wrap">
             {messages.length === 0 && !typing && (
@@ -229,12 +256,12 @@ export default function ChatDetailPage() {
           disabled={typing}
         />
         <button 
-          className="send-btn" 
+          className="send-btn eagle-btn" 
           onClick={onSend} 
           disabled={!text.trim() || typing}
           aria-label="Send"
         >
-          ➤
+          <img src={eagleIcon} alt="Send" className={`eagle-send-icon ${typing ? 'flying' : ''}`} />
         </button>
       </div>
     </div>

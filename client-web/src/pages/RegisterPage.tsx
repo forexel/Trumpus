@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { register } from '../lib/api'
+import eagleIcon from '../assets/eagle.png'
 
 export default function RegisterPage() {
   const [email, setEmail] = useState('')
@@ -39,6 +40,7 @@ export default function RegisterPage() {
     <div className="auth-screen">
       <div className="auth-overlay" />
       <div className="auth-content">
+        <img src={eagleIcon} alt="Eagle" className="auth-eagle" />
         <div className="auth-brand">
           <span className="auth-brand-text">Trumpus</span>
         </div>
