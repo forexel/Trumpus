@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { register } from '../lib/api'
 
 export default function RegisterPage() {
@@ -39,9 +39,11 @@ export default function RegisterPage() {
     <div className="auth-screen">
       <div className="auth-overlay" />
       <div className="auth-content">
-        <div className="auth-brand">Trumpus</div>
+        <div className="auth-brand">
+          <span className="auth-brand-text">Trumpus</span>
+        </div>
         <div className="auth-card">
-          <h1>Sign in</h1>
+          <h1>Create Account</h1>
           <form onSubmit={onSubmit} className="form">
             <label>E-mail</label>
             <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="mail@gmail.com" />
@@ -50,25 +52,26 @@ export default function RegisterPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter your password"
+              placeholder="Create a password"
             />
             <label>Confirm password</label>
             <input
               type="password"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
-              placeholder="Enter your password"
+              placeholder="Confirm your password"
             />
             {error ? <div className="error">{error}</div> : null}
-            <button className="btn-primary" type="submit">
-              {loading ? 'Loading...' : 'Sign In'}
-            </button>
-            <div className="auth-links">
-              <button type="button" className="linkish" onClick={() => navigate('/login')}>
-                Already got an account?
+            <div className="auth-actions">
+              <button className="btn-primary" type="submit" disabled={loading}>
+                {loading ? 'Creating account...' : 'Create Account'}
               </button>
             </div>
           </form>
+          <div className="auth-links">
+            <span></span>
+            <Link to="/login">Already have an account?</Link>
+          </div>
         </div>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { resetPassword } from '../lib/api'
 
 export default function ResetPasswordPage() {
@@ -73,15 +73,15 @@ export default function ResetPasswordPage() {
               placeholder="Enter your password"
             />
             {error ? <div className="error">{error}</div> : null}
-            <button className="btn-primary" type="submit">
-              {loading ? 'Loading...' : 'Save'}
-            </button>
-            <div className="auth-links">
-              <button type="button" className="linkish" onClick={() => navigate('/login')}>
-                Log in
+            <div className="auth-actions">
+              <button className="btn-primary" type="submit" disabled={loading}>
+                {loading ? 'Loading...' : 'Save'}
               </button>
             </div>
           </form>
+          <div className="auth-links">
+            <Link to="/login">Log in</Link>
+          </div>
         </div>
       </div>
     </div>
