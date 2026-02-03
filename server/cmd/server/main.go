@@ -50,6 +50,10 @@ type Message struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type llmResponse struct {
+	Content string `json:"content"`
+}
+
 type User struct {
 	Email    string `json:"email"`
 	Password string `json:"-"`
@@ -284,6 +288,38 @@ func main() {
 
 	log.Printf("listening on :%s", port)
 	log.Fatal(srv.ListenAndServe())
+}
+
+func callLLM(baseURL, chatID, persona, content string) (string, error) {
+	if strings.TrimSpace(baseURL) == "" {
+		return "", fmt.Errorf("llm base not set")
+	}
+	payload := jsonMap{
+		"chat_id": chatID,
+		"persona": persona,
+		"content": content,
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/respond", strings.NewReader(string(body)))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 20 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	respBody, _ := io.ReadAll(res.Body)
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return "", fmt.Errorf("llm error: %s", string(respBody))
+	}
+	var resp llmResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return "", err
+	}
+	return resp.Content, nil
 }
 
 func handleGoogleStart(cfg googleConfig) http.HandlerFunc {
@@ -867,6 +903,7 @@ func handleChatMessagesList(w http.ResponseWriter, r *http.Request, chatID strin
 func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string) {
 	var req struct {
 		Content string `json:"content"`
+		Persona string `json:"persona"`
 	}
 	if err := decodeJSON(r, &req); err != nil || strings.TrimSpace(req.Content) == "" {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "content required"})
@@ -897,6 +934,31 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 	}
 
 	writeJSON(w, http.StatusCreated, msg)
+
+	persona := chat.Persona
+	if strings.TrimSpace(req.Persona) != "" {
+		persona = req.Persona
+	}
+	llmBase := os.Getenv("LLM_BASE")
+	go func(chatID, persona, content string) {
+		resp, err := callLLM(llmBase, chatID, persona, content)
+		if err != nil || strings.TrimSpace(resp) == "" {
+			resp = "LLM is not configured."
+		}
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		if chat, ok := store.chats[chatID]; ok {
+			reply := &Message{
+				ID:        nextID("msg"),
+				ChatID:    chatID,
+				Sender:    "admin",
+				Content:   resp,
+				CreatedAt: time.Now(),
+			}
+			store.messages[chatID] = append(store.messages[chatID], reply)
+			chat.LastMessageAt = reply.CreatedAt
+		}
+	}(chatID, persona, req.Content)
 }
 
 func firstLine(text string, max int) string {

@@ -1,4 +1,5 @@
 import { Routes, Route, Link, Navigate, useLocation } from 'react-router-dom'
+import { getLastChatId } from './lib/api'
 import LoginPage from './pages/LoginPage'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import ChatsPage from './pages/ChatsPage'
@@ -33,7 +34,14 @@ export default function App() {
       )}
       <main className="content">
         <Routes>
-          <Route path="/" element={<Navigate to={token ? '/chats' : '/login'} replace />} />
+          <Route
+            path="/"
+            element={
+              token
+                ? <Navigate to={getLastChatId() ? `/chats/${getLastChatId()}` : '/chats'} replace />
+                : <Navigate to="/login" replace />
+            }
+          />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/forgot" element={<ForgotPasswordPage />} />
           <Route path="/register" element={<RegisterPage />} />
