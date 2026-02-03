@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { fetchChats, getClientId, ChatSummary, getLastMessage, deleteChat, createChat, sendMessage } from '../lib/api'
+import { fetchChats, fetchMessages, getClientId, ChatSummary, deleteChat, createChat, sendMessage } from '../lib/api'
 import { useTheme } from '../lib/useTheme'
 import { PERSONAS, Persona } from './NewChatPage'
 import trumpAvatar from '../assets/DonaldTrump.png'
@@ -90,16 +90,32 @@ export default function ChatsPage() {
     try {
       const data = await fetchChats(clientId)
       setChats(data.items)
-      
-      // Load last messages for each chat
+
+      // Load last messages for each chat from API
+      const entries = await Promise.all(
+        data.items.map(async (chat) => {
+          try {
+            const res = await fetchMessages(chat.id)
+            const last = res.items[res.items.length - 1]
+            if (!last) return null
+            return {
+              chatId: chat.id,
+              content: last.content,
+              time: last.created_at,
+              sender: last.sender,
+            }
+          } catch {
+            return null
+          }
+        })
+      )
       const messages: Record<string, { content: string; time: string; sender: string }> = {}
-      data.items.forEach(chat => {
-        const lastMsg = getLastMessage(chat.id)
-        if (lastMsg) {
-          messages[chat.id] = {
-            content: lastMsg.content,
-            time: lastMsg.created_at,
-            sender: lastMsg.sender
+      entries.forEach((entry) => {
+        if (entry) {
+          messages[entry.chatId] = {
+            content: entry.content,
+            time: entry.time,
+            sender: entry.sender,
           }
         }
       })
