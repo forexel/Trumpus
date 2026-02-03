@@ -1,15 +1,15 @@
 # Trumpus
 
-Client app + admin panel + chat server.
+Client app + admin panel + chat server + LLM worker.
 
 ## Stack
 
-- Backend: Go (net/http), REST; planned WebSocket
+- Backend: Go (net/http), REST; WebSocket planned
 - DB: PostgreSQL (Docker)
 - Admin web: React + Vite
 - Client web: React + Vite
 - Mobile (planned): React Native + Expo
-- LLM module (planned): Python service that calls LLM and writes to API
+- LLM module: Python (FastAPI) service that calls LLM provider
 
 ## Repo Structure
 
@@ -24,9 +24,9 @@ Client app + admin panel + chat server.
 
 - Client auth: email/password + Google OAuth (web)
 - Client chat list: shows only user’s chats
-- New chat: persona dropdown (Donald Trump / Barack Obama), title is first user message
-- Chat detail: user bubbles, LLM/admin bubbles with Markdown; typing indicator + typewriter effect
-- Admin: sees clients + chats, can reply to chat
+- New chat: persona dropdown (10 personas), title is first user message
+- Chat detail: user bubbles + LLM bubbles with Markdown; typing indicator
+- Admin: sees clients + chats, can reply to chat (basic)
 
 Note: user store is in-memory for now (Go server). Email sending for password reset is not connected yet.
 
@@ -39,13 +39,16 @@ docker compose up --build
 Containers:
 - `trumpus_db` (PostgreSQL)
 - `trumpus_api` (Go API)
+- `trumpus_llm` (LLM worker)
 - `trumpus_admin_web` (admin UI)
 - `trumpus_client_web` (client UI)
 
 Ports:
 - API: `http://localhost:8000`
+- LLM: `http://localhost:8010`
 - Admin web: `http://localhost:5174`
 - Client web: `http://localhost:5173`
+- DB: `localhost:5433`
 
 To reset DB data:
 
@@ -73,9 +76,14 @@ API:
 - `GOOGLE_CLIENT_ID=...`
 - `GOOGLE_CLIENT_SECRET=...`
 - `GOOGLE_OAUTH_CALLBACK_URL=https://YOUR_DOMAIN/api/v1/auth/google/callback`
+- `LLM_BASE=http://llm:8010`
 
 Client web:
 - `VITE_API_BASE=https://YOUR_DOMAIN/api/v1`
+
+LLM worker:
+- `OPENROUTER_API_KEY=...`
+- `OPENROUTER_MODEL=openai/gpt-oss-120b:free`
 
 ### Google OAuth (Web client)
 
@@ -98,11 +106,11 @@ See `docs/ARCHITECTURE.md` for full details.
 - LLM service calls API to send messages as a persona
 - API is the single source of truth for users/chats/messages
 
-## Where to Plug LLM Module
+## LLM Flow (Now)
 
-- LLM service should call server endpoints:
-  - `POST /api/v1/admin/chats/{chatId}/messages` (send message as AI)
-  - OR future `POST /api/v1/llm/respond` (to be added)
+- Client sends message to API: `POST /api/v1/chats/{chatId}/messages`
+- API calls LLM worker: `POST /respond`
+- API stores LLM reply as `sender=admin` and serves it to client
 
 See `docs/API.md` for current endpoints.
 
@@ -112,4 +120,14 @@ Client assets live in `client-web/src/assets/`:
 - `auth-bg.png` (auth background)
 - `google.svg` (Google icon)
 - `eagle.png` (empty state)
-- `trump.png`, `obama.png` (persona avatars)
+- persona avatars:
+  - `DonaldTrump.png`
+  - `ElonMask.png`
+  - `KaneyWest.png`
+  - `RichardNixon.png`
+  - `AndrewJackson.png`
+  - `MarjorieTaylorGreene.png`
+  - `TuckerCarlson.png`
+  - `LyndonBJohnson.png`
+  - `MarkZuckerberg.png`
+  - `JeffreyEpstein.png`

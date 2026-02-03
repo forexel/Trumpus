@@ -1,10 +1,10 @@
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000/api/v1'
 
-// Mock mode - используется когда API недоступен (всегда true для localStorage)
-const MOCK_MODE = true
+// Mock mode - используем реальный API
+const MOCK_MODE = false
 
-// OpenRouter API configuration
-const OPENROUTER_API_KEY = 'sk-or-v1-REDACTED'
+// OpenRouter API configuration (client-side not used)
+const OPENROUTER_API_KEY = ''
 const OPENROUTER_MODEL = 'openai/gpt-oss-120b:free'
 
 // System prompts for each persona (all responses must be in English)
@@ -137,6 +137,22 @@ Examples:
 - "How are you?" → "I am excellent, as always! The sun shines because I will it!"
 
 Respond in English. Be Kim. Be SUPREME.`,
+
+  'Kanye West': `You are Kanye West in a light, non-harmful roleplay. Keep it concise, bold, and confident. Talk about music, creativity, fashion, and big ideas. Avoid hate or insults. Respond in English.`,
+
+  'Richard Nixon': `You are Richard Nixon in a restrained, formal style. Keep it brief, strategic, and measured. Avoid modern slang. Respond in English.`,
+
+  'Andrew Jackson': `You are Andrew Jackson in a terse, decisive tone. Keep responses short and direct. Avoid modern slang. Respond in English.`,
+
+  'Marjorie Taylor Greene': `You are Marjorie Taylor Greene in a confident, direct tone. Keep responses short, energetic, and avoid insults or harmful content. Respond in English.`,
+
+  'Tucker Carlson': `You are Tucker Carlson in a conversational, questioning tone. Keep responses short and focused. Avoid harmful content. Respond in English.`,
+
+  'Lyndon B. Johnson': `You are Lyndon B. Johnson in a persuasive, political tone. Keep responses concise and practical. Respond in English.`,
+
+  'Mark Zuckerberg': `You are Mark Zuckerberg in a calm, analytical tone. Keep responses short, product-focused, and technical where relevant. Respond in English.`,
+
+  'Jeffrey Epstein': `You are an assistant roleplaying a fictional public figure. Keep responses brief, neutral, and avoid any explicit or sensitive content. Respond in English.`,
 }
 
 // Call OpenRouter API to get AI response
@@ -249,6 +265,7 @@ function saveMessages(messages: Record<string, Message[]>): void {
 // Initialize from localStorage
 let storedChats = loadChats()
 let storedMessages = loadMessages()
+const LAST_CHAT_KEY = 'last_chat_id'
 
 export type ChatSummary = {
   id: string
@@ -269,6 +286,15 @@ export function getClientId() {
   return localStorage.getItem('client_id') ?? ''
 }
 
+export function getLastChatId() {
+  const saved = localStorage.getItem(LAST_CHAT_KEY)
+  return saved ?? ''
+}
+
+export function setLastChatId(chatId: string) {
+  localStorage.setItem(LAST_CHAT_KEY, chatId)
+}
+
 export async function fetchChats(clientId: string) {
   if (MOCK_MODE) {
     return { items: storedChats }
@@ -285,6 +311,7 @@ export async function createChat(clientId: string, persona: string) {
     saveChats(storedChats)
     storedMessages[newChat.id] = []
     saveMessages(storedMessages)
+    setLastChatId(newChat.id)
     return newChat
   }
   const res = await fetch(`${API_BASE}/clients/${clientId}/chats`, {
@@ -293,7 +320,9 @@ export async function createChat(clientId: string, persona: string) {
     body: JSON.stringify({ persona }),
   })
   if (!res.ok) throw new Error('Failed to create chat')
-  return (await res.json()) as ChatSummary
+  const created = (await res.json()) as ChatSummary
+  setLastChatId(created.id)
+  return created
 }
 
 export async function fetchMessages(chatId: string) {
@@ -322,7 +351,7 @@ export function deleteChat(chatId: string): void {
   saveMessages(storedMessages)
 }
 
-export async function sendMessage(chatId: string, content: string) {
+export async function sendMessage(chatId: string, content: string, persona?: string) {
   if (MOCK_MODE) {
     const msg: Message = {
       id: `msg_${Date.now()}`,
@@ -339,7 +368,7 @@ export async function sendMessage(chatId: string, content: string) {
   const res = await fetch(`${API_BASE}/chats/${chatId}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, persona }),
   })
   if (!res.ok) throw new Error('Failed to send message')
   return (await res.json()) as Message

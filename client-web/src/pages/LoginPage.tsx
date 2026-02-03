@@ -26,7 +26,7 @@ export default function LoginPage() {
       localStorage.setItem('client_token', data.token)
       localStorage.setItem('client_email', data.email)
       localStorage.setItem('client_id', data.client_id)
-      navigate('/chats')
+      navigate('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')
     } finally {

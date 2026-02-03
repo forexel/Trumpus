@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { fetchChats, fetchMessages, getClientId, sendMessage, getAIResponse, saveAIMessage, updateChatTitle, Message, ChatSummary } from '../lib/api'
+import { fetchChats, fetchMessages, getClientId, sendMessage, updateChatTitle, setLastChatId, Message, ChatSummary } from '../lib/api'
 import { useTheme } from '../lib/useTheme'
 import { PERSONAS } from './NewChatPage'
 import eagleIcon from '../assets/eagle.png'
@@ -38,9 +38,7 @@ export default function ChatDetailPage() {
   const [text, setText] = useState('')
   const [loading, setLoading] = useState(true)
   const [typing, setTyping] = useState(false)
-  const [assistantDraft, setAssistantDraft] = useState('')
   const navigate = useNavigate()
-  const intervalRef = useRef<number | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const pendingAIRef = useRef(false)
@@ -52,25 +50,28 @@ export default function ChatDetailPage() {
       navigate('/login')
       return
     }
+    if (chatId) setLastChatId(chatId)
     setLoading(true)
     Promise.all([fetchChats(clientId), fetchMessages(chatId)])
       .then(([chatList, msgList]) => {
         const found = chatList.items.find((c) => c.id === chatId) ?? null
+        if (!found) {
+          navigate('/chats', { replace: true })
+          return
+        }
         setChat(found)
         setMessages(msgList.items)
+      })
+      .catch(() => {
+        navigate('/chats', { replace: true })
       })
       .finally(() => setLoading(false))
   }, [chatId, navigate])
 
-  useEffect(() => {
-    return () => {
-      if (intervalRef.current) window.clearInterval(intervalRef.current)
-    }
-  }, [])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, assistantDraft])
+  }, [messages])
 
   // Focus input on mount
   useEffect(() => {
@@ -79,25 +80,20 @@ export default function ChatDetailPage() {
     }
   }, [loading])
 
-  function startTypewriter(fullText: string, aiMsg: Message) {
-    setAssistantDraft('')
-    let index = 0
-    const speed = Math.max(10, Math.min(30, 1500 / fullText.length)) // Adaptive speed
-    intervalRef.current = window.setInterval(() => {
-      index += 2
-      setAssistantDraft(fullText.slice(0, index))
-      if (index >= fullText.length) {
-        if (intervalRef.current) window.clearInterval(intervalRef.current)
-        intervalRef.current = null
-        setAssistantDraft('')
-        setMessages(prev => {
-          if (prev.some(m => m.id === aiMsg.id)) return prev
-          return [...prev, aiMsg]
-        })
+  async function pollForAI(chatID: string, previousCount: number) {
+    const maxAttempts = 20
+    for (let i = 0; i < maxAttempts; i += 1) {
+      await new Promise(r => setTimeout(r, 1000))
+      const res = await fetchMessages(chatID)
+      if (res.items.length > previousCount) {
+        setMessages(res.items)
         setTyping(false)
         pendingAIRef.current = false
+        return
       }
-    }, speed)
+    }
+    setTyping(false)
+    pendingAIRef.current = false
   }
 
   async function onSend() {
@@ -106,7 +102,7 @@ export default function ChatDetailPage() {
     setText('')
     pendingAIRef.current = true
     
-    const msg = await sendMessage(chatId, content)
+    const msg = await sendMessage(chatId, content, persona)
     const updatedMessages = [...messages, msg]
     setMessages(updatedMessages)
     
@@ -117,22 +113,9 @@ export default function ChatDetailPage() {
       setChat(prev => prev ? { ...prev, title: newTitle } : prev)
     }
     
-    // Get AI response
+    // Wait for LLM response via API
     setTyping(true)
-    try {
-      const persona = chat?.persona || 'Donald Trump'
-      const aiResponse = await getAIResponse(persona, updatedMessages)
-      const aiMsg = saveAIMessage(chatId, aiResponse)
-      startTypewriter(aiResponse, aiMsg)
-    } catch (error) {
-      console.error('Failed to get AI response:', error)
-      setTyping(false)
-      pendingAIRef.current = false
-      // Show error as a message
-      const errorContent = "⚠️ Server is busy. Please try again in a moment."
-      const errorMsg = saveAIMessage(chatId, errorContent)
-      setMessages(prev => [...prev, errorMsg])
-    }
+    pollForAI(chatId, updatedMessages.length)
   }
 
   const markdownComponents = useMemo(
@@ -152,11 +135,7 @@ export default function ChatDetailPage() {
   return (
     <div className="mobile-page chat-page">
       <header className="mobile-header chat-header">
-        <button className="back-btn" onClick={() => navigate('/chats')} aria-label="Back">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
-        </button>
+        <button className="back-btn" onClick={() => navigate('/chats')} aria-label="Back" />
         <span className="header-flag">🇺🇸</span>
         <div className="header-title header-chat">
           {persona ? (
@@ -176,23 +155,8 @@ export default function ChatDetailPage() {
           </div>
         </div>
         <button className="theme-toggle" onClick={toggleTheme} title={theme === 'dark' ? 'Light mode' : 'Dark mode'}>
-          {theme === 'dark' ? (
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="5"/>
-              <line x1="12" y1="1" x2="12" y2="3"/>
-              <line x1="12" y1="21" x2="12" y2="23"/>
-              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
-              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
-              <line x1="1" y1="12" x2="3" y2="12"/>
-              <line x1="21" y1="12" x2="23" y2="12"/>
-              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
-              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-            </svg>
-          ) : (
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-            </svg>
-          )}
+          <span className="theme-icon theme-icon-moon" aria-hidden="true" />
+          <span className="theme-icon theme-icon-sun" aria-hidden="true" />
         </button>
       </header>
 
@@ -227,18 +191,12 @@ export default function ChatDetailPage() {
               </div>
             ))}
             {typing && (
-              <div className="bubble ai">
-                {assistantDraft ? (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                    {assistantDraft}
-                  </ReactMarkdown>
-                ) : (
-                  <div className="typing-dots">
-                    <span />
-                    <span />
-                    <span />
-                  </div>
-                )}
+              <div className="bubble ai typing">
+                <div className="typing-dots">
+                  <span />
+                  <span />
+                  <span />
+                </div>
               </div>
             )}
             <div ref={messagesEndRef} />
@@ -246,7 +204,7 @@ export default function ChatDetailPage() {
         )}
       </main>
 
-      <div className="composer-bottom">
+      <div className="composer-bottom composer-fixed">
         <input
           ref={inputRef}
           placeholder="Type a message..."

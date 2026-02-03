@@ -11,7 +11,7 @@
   - Messages
   - Create chat with persona
   - Title = first user message
-  - Typing indicator + typewriter for AI reply
+  - Typing indicator while LLM responds
 - Admin
   - Client list
   - Chat list
@@ -26,15 +26,15 @@
   - Future WebSocket for realtime
 - DB (PostgreSQL)
   - users, chats, messages, admin_users
-- LLM Service (Python, planned)
-  - Calls LLM provider
-  - Sends messages to API as persona
+- LLM Service (Python)
+  - Calls LLM provider (OpenRouter)
+  - Returns response to API
 
 ## Data Flow
 
 Client -> API -> DB
 Admin -> API -> DB
-LLM Service -> API -> DB
+Client -> API -> LLM Service -> API -> DB
 
 ## Realtime (future)
 
@@ -55,13 +55,15 @@ Scale with:
 
 ## LLM Integration
 
-Recommended:
-- LLM service creates/updates messages via API
-- API stores messages and distributes via WS
+Current flow:
+- Client sends message to API
+- API calls LLM service `/respond`
+- API stores LLM reply as message (`sender=admin`)
+- Client polls messages
 
 Entry points:
-- `POST /api/v1/admin/chats/{chatId}/messages` (current)
-- `POST /api/v1/llm/respond` (planned)
+- `POST /api/v1/chats/{chatId}/messages` (client)
+- `POST /respond` (LLM worker, internal)
 
 Persona selection:
 - Client creates chat with `persona`
