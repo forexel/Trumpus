@@ -233,7 +233,7 @@ func (s *Store) listChatsByClient(clientID string) ([]*Chat, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*Chat
+	out := make([]*Chat, 0)
 	for rows.Next() {
 		var c Chat
 		if err := rows.Scan(&c.ID, &c.ClientID, &c.Title, &c.Persona, &c.UnreadForAdmin, &c.LastMessageAt); err != nil {
@@ -251,7 +251,7 @@ func (s *Store) listAllChats() ([]*Chat, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*Chat
+	out := make([]*Chat, 0)
 	for rows.Next() {
 		var c Chat
 		if err := rows.Scan(&c.ID, &c.ClientID, &c.Title, &c.Persona, &c.UnreadForAdmin, &c.LastMessageAt); err != nil {
