@@ -957,7 +957,7 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 		resp, status, body, err := callLLM(llmBase, chatID, persona, content)
 		if err != nil || strings.TrimSpace(resp) == "" {
 			log.Printf("llm_error req_id=%s chat_id=%s status=%d err=%v body=%s", requestID, chatID, status, err, body)
-			resp = "LLM is not configured."
+			resp = "Sorry, I cannot respond right now. Please try again."
 		}
 		store.mu.Lock()
 		defer store.mu.Unlock()
