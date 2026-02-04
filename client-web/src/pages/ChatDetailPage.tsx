@@ -81,13 +81,14 @@ export default function ChatDetailPage() {
   // Check if we need AI response after loading (e.g., message sent from NewChatPage)
   useEffect(() => {
     if (loading || !chat || messages.length === 0 || typing || pendingAIRef.current) return
-    
+
     const lastMessage = messages[messages.length - 1]
-    // If last message is from user, we need AI response
-    if (lastMessage.sender === 'client' && MOCK_MODE) {
-      pendingAIRef.current = true
-      setTyping(true)
-      
+    if (lastMessage.sender !== 'client') return
+
+    pendingAIRef.current = true
+    setTyping(true)
+
+    if (MOCK_MODE) {
       getAIResponse(chat.persona || 'Donald Trump', messages)
         .then(aiResponse => {
           const aiMsg = saveAIMessage(chatId, aiResponse)
@@ -102,7 +103,10 @@ export default function ChatDetailPage() {
           setTyping(false)
           pendingAIRef.current = false
         })
+      return
     }
+
+    pollForAI(chatId, messages.length)
   }, [loading, chat, messages.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Focus input on mount
