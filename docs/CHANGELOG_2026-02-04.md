@@ -279,6 +279,63 @@ AI: "Тебя зовут Алекс, мы уже познакомились!"
 
 ---
 
+## 9. Исправление AI ответа на первое сообщение
+
+### Файл: `client-web/src/pages/ChatDetailPage.tsx`
+
+**Проблема:** При создании чата в `NewChatPage` с первым сообщением, AI не отвечал. Сообщение отправлялось, но `getAIResponse` не вызывался.
+
+**Причина:** В `NewChatPage` при создании чата вызывается `sendMessage()`, но не вызывается получение AI ответа. Затем происходит редирект на `ChatDetailPage`.
+
+**Решение:**
+
+1. Перенос определения `persona` и `personaName` в начало компонента:
+   ```typescript
+   // Get persona info from chat
+   const persona = chat?.persona ? getPersonaByName(chat.persona) : null
+   const personaName = chat?.persona || 'Donald Trump'
+   ```
+
+2. Добавлен `useEffect` для автоматического запроса AI ответа при загрузке страницы:
+   ```typescript
+   // Check if we need AI response after loading
+   useEffect(() => {
+     if (loading || !chat || messages.length === 0 || typing || pendingAIRef.current) return
+     
+     const lastMessage = messages[messages.length - 1]
+     // If last message is from user, we need AI response
+     if (lastMessage.sender === 'client' && MOCK_MODE) {
+       pendingAIRef.current = true
+       setTyping(true)
+       
+       getAIResponse(chat.persona || 'Donald Trump', messages)
+         .then(aiResponse => {
+           const aiMsg = saveAIMessage(chatId, aiResponse)
+           setMessages(prev => [...prev, aiMsg])
+         })
+         .catch(error => {
+           console.error('AI response error:', error)
+           const errorMsg = saveAIMessage(chatId, 'Sorry, I cannot respond right now.')
+           setMessages(prev => [...prev, errorMsg])
+         })
+         .finally(() => {
+           setTyping(false)
+           pendingAIRef.current = false
+         })
+     }
+   }, [loading, chat, messages.length])
+   ```
+
+**Логика:**
+1. При загрузке ChatDetailPage проверяем последнее сообщение
+2. Если оно от пользователя (`sender === 'client'`) и мы в MOCK_MODE
+3. Автоматически запрашиваем AI ответ
+4. Это работает для:
+   - Первого сообщения созданного в NewChatPage
+   - Любого случая когда AI не успел ответить
+
+---
+
 ## Структура файлов
 
 ```
