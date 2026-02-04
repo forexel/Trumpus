@@ -1,11 +1,11 @@
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000/api/v1'
 
 // Mock mode - работаем без бэкенда (localStorage + OpenAI напрямую)
-export const MOCK_MODE = true
+export const MOCK_MODE = (import.meta.env.VITE_MOCK_MODE ?? 'false') === 'true'
 
 // OpenAI API configuration
-const OPENAI_API_KEY = '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'
-const OPENAI_MODEL = 'gpt-4o-mini'
+const OPENAI_API_KEY = (import.meta.env.VITE_OPENAI_API_KEY as string | undefined) ?? ''
+const OPENAI_MODEL = (import.meta.env.VITE_OPENAI_MODEL as string | undefined) ?? 'gpt-4o-mini'
 
 // System prompts for each persona (all responses must be in English)
 const PERSONA_PROMPTS: Record<string, string> = {
