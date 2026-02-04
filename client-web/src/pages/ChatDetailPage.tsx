@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { fetchChats, fetchMessages, getClientId, sendMessage, updateChatTitle, setLastChatId, Message, ChatSummary } from '../lib/api'
+import { fetchChats, fetchMessages, getClientId, sendMessage, updateChatTitle, setLastChatId, Message, ChatSummary, getAIResponse, saveAIMessage, MOCK_MODE } from '../lib/api'
 import { useTheme } from '../lib/useTheme'
 import { PERSONAS } from './NewChatPage'
 import eagleIcon from '../assets/eagle.png'
@@ -38,6 +38,7 @@ export default function ChatDetailPage() {
   const [text, setText] = useState('')
   const [loading, setLoading] = useState(true)
   const [typing, setTyping] = useState(false)
+  const [sending, setSending] = useState(false)
   const navigate = useNavigate()
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -97,12 +98,15 @@ export default function ChatDetailPage() {
   }
 
   async function onSend() {
-    if (!text.trim() || !chatId || typing || pendingAIRef.current) return
+    if (!text.trim() || !chatId || typing || sending || pendingAIRef.current) return
+    
+    // Сразу блокируем повторную отправку
+    pendingAIRef.current = true
+    setSending(true)
     const content = text
     setText('')
-    pendingAIRef.current = true
     
-    const msg = await sendMessage(chatId, content, persona)
+    const msg = await sendMessage(chatId, content, persona?.name)
     const updatedMessages = [...messages, msg]
     setMessages(updatedMessages)
     
@@ -113,9 +117,28 @@ export default function ChatDetailPage() {
       setChat(prev => prev ? { ...prev, title: newTitle } : prev)
     }
     
-    // Wait for LLM response via API
+    // Get AI response
     setTyping(true)
-    pollForAI(chatId, updatedMessages.length)
+    setSending(false)
+    
+    if (MOCK_MODE) {
+      // В MOCK_MODE вызываем OpenAI напрямую
+      try {
+        const aiResponse = await getAIResponse(persona?.name || 'Donald Trump', updatedMessages)
+        const aiMsg = saveAIMessage(chatId, aiResponse)
+        setMessages([...updatedMessages, aiMsg])
+      } catch (error) {
+        console.error('AI response error:', error)
+        const errorMsg = saveAIMessage(chatId, 'Sorry, I cannot respond right now. Please try again.')
+        setMessages([...updatedMessages, errorMsg])
+      } finally {
+        setTyping(false)
+        pendingAIRef.current = false
+      }
+    } else {
+      // Wait for LLM response via API
+      pollForAI(chatId, updatedMessages.length)
+    }
   }
 
   const markdownComponents = useMemo(
@@ -211,12 +234,12 @@ export default function ChatDetailPage() {
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && onSend()}
-          disabled={typing}
+          disabled={typing || sending}
         />
         <button 
           className="send-btn eagle-btn" 
           onClick={onSend} 
-          disabled={!text.trim() || typing}
+          disabled={!text.trim() || typing || sending}
           aria-label="Send"
         >
           <img src={eagleIcon} alt="Send" className={`eagle-send-icon ${typing ? 'flying' : ''}`} />
