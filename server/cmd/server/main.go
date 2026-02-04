@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	_ "github.com/lib/pq"
 )
 
 type jsonMap map[string]any
@@ -60,16 +63,11 @@ type User struct {
 }
 
 type Store struct {
-	mu       sync.Mutex
-	clients  map[string]*Client
-	emailIdx map[string]string
-	users    map[string]*User
-	chats    map[string]*Chat
-	messages map[string][]*Message
+	db *sql.DB
 }
 
 var (
-	store     = newStore()
+	store     *Store
 	idCounter int64
 
 	googleStateMu sync.Mutex
@@ -81,135 +79,295 @@ type googleStateEntry struct {
 	CreatedAt   time.Time
 }
 
-func newStore() *Store {
-	s := &Store{
-		clients:  make(map[string]*Client),
-		emailIdx: make(map[string]string),
-		users:    make(map[string]*User),
-		chats:    make(map[string]*Chat),
-		messages: make(map[string][]*Message),
+func newStore(dsn string) (*Store, error) {
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, err
 	}
-	seedStore(s)
-	return s
+	if err := db.Ping(); err != nil {
+		return nil, err
+	}
+	s := &Store{db: db}
+	if err := s.migrate(); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
-func seedStore(s *Store) {
-	c1 := &Client{ID: "client_1", Name: "alex.johnson@example.com"}
-	c2 := &Client{ID: "client_2", Name: "maria.lopez@example.com"}
-	s.clients[c1.ID] = c1
-	s.clients[c2.ID] = c2
-	s.emailIdx[c1.Name] = c1.ID
-	s.emailIdx[c2.Name] = c2.ID
-
-	chat1 := &Chat{
-		ID:             "chat_1",
-		ClientID:       c1.ID,
-		Title:          "Привет! Нужна помощь с регистрацией.",
-		Persona:        "Donald Trump",
-		UnreadForAdmin: 1,
-		LastMessageAt:  time.Now().Add(-15 * time.Minute),
+func (s *Store) migrate() error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS clients (
+			id TEXT PRIMARY KEY,
+			name TEXT UNIQUE NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS users (
+			email TEXT PRIMARY KEY,
+			password TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS chats (
+			id TEXT PRIMARY KEY,
+			client_id TEXT NOT NULL REFERENCES clients(id),
+			title TEXT NOT NULL DEFAULT '',
+			persona TEXT NOT NULL,
+			unread_for_admin INT NOT NULL DEFAULT 0,
+			last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_chats_client_id ON chats(client_id)`,
+		`CREATE TABLE IF NOT EXISTS messages (
+			id TEXT PRIMARY KEY,
+			chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+			sender TEXT NOT NULL,
+			content TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)`,
 	}
-	chat2 := &Chat{
-		ID:             "chat_2",
-		ClientID:       c2.ID,
-		Title:          "Хочу узнать про тарифы.",
-		Persona:        "Barack Obama",
-		UnreadForAdmin: 0,
-		LastMessageAt:  time.Now().Add(-1 * time.Hour),
-	}
-	s.chats[chat1.ID] = chat1
-	s.chats[chat2.ID] = chat2
-
-	s.messages[chat1.ID] = []*Message{
-		{
-			ID:        nextID("msg"),
-			ChatID:    chat1.ID,
-			Sender:    "client",
-			Content:   "Привет! Нужна помощь с **регистрацией**.\n\n- Не приходит код\n- Не открывается экран",
-			CreatedAt: time.Now().Add(-16 * time.Minute),
-		},
-		{
-			ID:        nextID("msg"),
-			ChatID:    chat1.ID,
-			Sender:    "admin",
-			Content:   "Сейчас проверю. 👍",
-			CreatedAt: time.Now().Add(-14 * time.Minute),
-		},
-		{
-			ID:        nextID("msg"),
-			ChatID:    chat1.ID,
-			Sender:    "client",
-			Content:   "Спасибо!",
-			CreatedAt: time.Now().Add(-12 * time.Minute),
-		},
-	}
-	s.messages[chat2.ID] = []*Message{
-		{
-			ID:        nextID("msg"),
-			ChatID:    chat2.ID,
-			Sender:    "client",
-			Content:   "Хочу узнать про тарифы.",
-			CreatedAt: time.Now().Add(-2 * time.Hour),
-		},
-	}
-}
-
-func (s *Store) getOrCreateClientByEmail(email string) *Client {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.getOrCreateClientByEmailLocked(email)
-}
-
-func (s *Store) getOrCreateClientByEmailLocked(email string) *Client {
-	if id, ok := s.emailIdx[email]; ok {
-		if client, exists := s.clients[id]; exists {
-			return client
+	for _, stmt := range stmts {
+		if _, err := s.db.Exec(stmt); err != nil {
+			return err
 		}
 	}
+	return nil
+}
 
+func (s *Store) getOrCreateClientByEmail(email string) (*Client, error) {
+	var client Client
+	err := s.db.QueryRow(`SELECT id, name FROM clients WHERE name=$1`, email).Scan(&client.ID, &client.Name)
+	if err == nil {
+		return &client, nil
+	}
+	if err != sql.ErrNoRows {
+		return nil, err
+	}
 	id := nextID("client")
-	client := &Client{ID: id, Name: email}
-	s.clients[id] = client
-	s.emailIdx[email] = id
-	return client
+	_, err = s.db.Exec(`INSERT INTO clients (id, name) VALUES ($1, $2)`, id, email)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{ID: id, Name: email}, nil
 }
 
-func (s *Store) registerUser(email, password string) (*Client, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, exists := s.users[email]; exists {
-		return nil, false
+func (s *Store) registerUser(email, password string) (*Client, bool, error) {
+	_, err := s.db.Exec(`INSERT INTO users (email, password) VALUES ($1, $2)`, email, password)
+	if err != nil {
+		if strings.Contains(err.Error(), "duplicate") {
+			return nil, false, nil
+		}
+		return nil, false, err
 	}
-
-	s.users[email] = &User{Email: email, Password: password}
-	client := s.getOrCreateClientByEmailLocked(email)
-	return client, true
+	client, err := s.getOrCreateClientByEmail(email)
+	if err != nil {
+		return nil, false, err
+	}
+	return client, true, nil
 }
 
-func (s *Store) authenticateUser(email, password string) (*Client, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	user, ok := s.users[email]
-	if !ok || user.Password != password {
-		return nil, false
+func (s *Store) authenticateUser(email, password string) (*Client, bool, error) {
+	var stored string
+	if err := s.db.QueryRow(`SELECT password FROM users WHERE email=$1`, email).Scan(&stored); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, false, nil
+		}
+		return nil, false, err
 	}
-	client := s.getOrCreateClientByEmailLocked(email)
-	return client, true
+	if stored != password {
+		return nil, false, nil
+	}
+	client, err := s.getOrCreateClientByEmail(email)
+	if err != nil {
+		return nil, false, err
+	}
+	return client, true, nil
 }
 
-func (s *Store) resetUserPassword(email, oldPassword, newPassword string) (*Client, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	user, ok := s.users[email]
-	if !ok || user.Password != oldPassword {
-		return nil, false
+func (s *Store) resetUserPassword(email, oldPassword, newPassword string) (*Client, bool, error) {
+	res, err := s.db.Exec(`UPDATE users SET password=$1 WHERE email=$2 AND password=$3`, newPassword, email, oldPassword)
+	if err != nil {
+		return nil, false, err
 	}
-	user.Password = newPassword
-	client := s.getOrCreateClientByEmailLocked(email)
-	return client, true
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return nil, false, nil
+	}
+	client, err := s.getOrCreateClientByEmail(email)
+	if err != nil {
+		return nil, false, err
+	}
+	return client, true, nil
+}
+
+func (s *Store) getClientByID(id string) (*Client, error) {
+	var c Client
+	if err := s.db.QueryRow(`SELECT id, name FROM clients WHERE id=$1`, id).Scan(&c.ID, &c.Name); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (s *Store) listClients() ([]*Client, error) {
+	rows, err := s.db.Query(`SELECT id, name FROM clients ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Client
+	for rows.Next() {
+		var c Client
+		if err := rows.Scan(&c.ID, &c.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, &c)
+	}
+	return out, nil
+}
+
+func (s *Store) listChatsByClient(clientID string) ([]*Chat, error) {
+	rows, err := s.db.Query(`SELECT id, client_id, title, persona, unread_for_admin, last_message_at
+		FROM chats WHERE client_id=$1 ORDER BY last_message_at DESC`, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Chat
+	for rows.Next() {
+		var c Chat
+		if err := rows.Scan(&c.ID, &c.ClientID, &c.Title, &c.Persona, &c.UnreadForAdmin, &c.LastMessageAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &c)
+	}
+	return out, nil
+}
+
+func (s *Store) listAllChats() ([]*Chat, error) {
+	rows, err := s.db.Query(`SELECT id, client_id, title, persona, unread_for_admin, last_message_at
+		FROM chats ORDER BY last_message_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Chat
+	for rows.Next() {
+		var c Chat
+		if err := rows.Scan(&c.ID, &c.ClientID, &c.Title, &c.Persona, &c.UnreadForAdmin, &c.LastMessageAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &c)
+	}
+	return out, nil
+}
+
+func (s *Store) getChatByID(id string) (*Chat, error) {
+	var c Chat
+	if err := s.db.QueryRow(`SELECT id, client_id, title, persona, unread_for_admin, last_message_at FROM chats WHERE id=$1`, id).
+		Scan(&c.ID, &c.ClientID, &c.Title, &c.Persona, &c.UnreadForAdmin, &c.LastMessageAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (s *Store) createChat(clientID, title, persona string) (*Chat, error) {
+	chat := &Chat{
+		ID:             nextID("chat"),
+		ClientID:       clientID,
+		Title:          strings.TrimSpace(title),
+		Persona:        strings.TrimSpace(persona),
+		UnreadForAdmin: 0,
+		LastMessageAt:  time.Now(),
+	}
+	_, err := s.db.Exec(`INSERT INTO chats (id, client_id, title, persona, unread_for_admin, last_message_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`, chat.ID, chat.ClientID, chat.Title, chat.Persona, chat.UnreadForAdmin, chat.LastMessageAt)
+	if err != nil {
+		return nil, err
+	}
+	return chat, nil
+}
+
+func (s *Store) listMessages(chatID string) ([]*Message, error) {
+	rows, err := s.db.Query(`SELECT id, chat_id, sender, content, created_at FROM messages WHERE chat_id=$1 ORDER BY created_at ASC`, chatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Message
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.ID, &m.ChatID, &m.Sender, &m.Content, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &m)
+	}
+	return out, nil
+}
+
+func (s *Store) insertMessage(chatID, sender, content string, createdAt time.Time) (*Message, error) {
+	msg := &Message{
+		ID:        nextID("msg"),
+		ChatID:    chatID,
+		Sender:    sender,
+		Content:   content,
+		CreatedAt: createdAt,
+	}
+	_, err := s.db.Exec(`INSERT INTO messages (id, chat_id, sender, content, created_at) VALUES ($1,$2,$3,$4,$5)`,
+		msg.ID, msg.ChatID, msg.Sender, msg.Content, msg.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return msg, nil
+}
+
+func (s *Store) updateChatTitle(chatID, title string) error {
+	_, err := s.db.Exec(`UPDATE chats SET title=$1 WHERE id=$2`, title, chatID)
+	return err
+}
+
+func (s *Store) updateChatUnread(chatID string, unread int) error {
+	_, err := s.db.Exec(`UPDATE chats SET unread_for_admin=$1 WHERE id=$2`, unread, chatID)
+	return err
+}
+
+func (s *Store) updateChatLastMessage(chatID string, t time.Time) error {
+	_, err := s.db.Exec(`UPDATE chats SET last_message_at=$1 WHERE id=$2`, t, chatID)
+	return err
+}
+
+func (s *Store) findRecentClientDuplicate(chatID, content string, now time.Time, window time.Duration) (*Message, error) {
+	var m Message
+	err := s.db.QueryRow(`SELECT id, chat_id, sender, content, created_at
+		FROM messages WHERE chat_id=$1 AND sender='client' ORDER BY created_at DESC LIMIT 1`, chatID).
+		Scan(&m.ID, &m.ChatID, &m.Sender, &m.Content, &m.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if m.Content == content && now.Sub(m.CreatedAt) <= window {
+		return &m, nil
+	}
+	return nil, nil
+}
+
+func (s *Store) getLastAdminMessage(chatID string) (*Message, error) {
+	var m Message
+	err := s.db.QueryRow(`SELECT id, chat_id, sender, content, created_at
+		FROM messages WHERE chat_id=$1 AND sender='admin' ORDER BY created_at DESC LIMIT 1`, chatID).
+		Scan(&m.ID, &m.ChatID, &m.Sender, &m.Content, &m.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &m, nil
 }
 
 func nextID(prefix string) string {
@@ -251,6 +409,15 @@ func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8000"
+	}
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		log.Fatal("DATABASE_URL is required")
+	}
+	var err error
+	store, err = newStore(dsn)
+	if err != nil {
+		log.Fatalf("failed to init db: %v", err)
 	}
 
 	googleCfg := googleConfig{
@@ -404,7 +571,11 @@ func handleGoogleCallback(cfg googleConfig) http.HandlerFunc {
 			return
 		}
 
-		client := store.getOrCreateClientByEmail(userInfo.Email)
+		client, err := store.getOrCreateClientByEmail(userInfo.Email)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+			return
+		}
 
 		// For now issue a stub token for the client app.
 		redirectURL, err := url.Parse(stateEntry.RedirectURL)
@@ -518,7 +689,11 @@ func handleClientLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "email and password required"})
 		return
 	}
-	client, ok := store.authenticateUser(req.Email, req.Password)
+	client, ok, err := store.authenticateUser(req.Email, req.Password)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "invalid credentials"})
 		return
@@ -547,7 +722,11 @@ func handleClientRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "email and password required"})
 		return
 	}
-	client, ok := store.registerUser(req.Email, req.Password)
+	client, ok, err := store.registerUser(req.Email, req.Password)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
 	if !ok {
 		writeJSON(w, http.StatusConflict, jsonMap{"error": "user already exists"})
 		return
@@ -596,7 +775,11 @@ func handleClientReset(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "email and passwords required"})
 		return
 	}
-	client, ok := store.resetUserPassword(req.Email, req.OldPassword, req.NewPassword)
+	client, ok, err := store.resetUserPassword(req.Email, req.OldPassword, req.NewPassword)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "invalid credentials"})
 		return
@@ -613,10 +796,6 @@ func handleAdminClients(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
 		return
 	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
 	type chatSummary struct {
 		ID             string `json:"id"`
 		Title          string `json:"title"`
@@ -628,14 +807,20 @@ func handleAdminClients(w http.ResponseWriter, r *http.Request) {
 		Name  string        `json:"name"`
 		Chats []chatSummary `json:"chats"`
 	}
-
-	items := make([]clientSummary, 0, len(store.clients))
-	for _, client := range store.clients {
+	clients, err := store.listClients()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	items := make([]clientSummary, 0, len(clients))
+	for _, client := range clients {
 		summary := clientSummary{ID: client.ID, Name: client.Name}
-		for _, chat := range store.chats {
-			if chat.ClientID != client.ID {
-				continue
-			}
+		chats, err := store.listChatsByClient(client.ID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+			return
+		}
+		for _, chat := range chats {
 			summary.Chats = append(summary.Chats, chatSummary{
 				ID:             chat.ID,
 				Title:          chat.Title,
@@ -645,7 +830,6 @@ func handleAdminClients(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, summary)
 	}
-
 	writeJSON(w, http.StatusOK, jsonMap{"items": items})
 }
 
@@ -654,10 +838,6 @@ func handleAdminChats(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
 		return
 	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
 	type chatItem struct {
 		ID             string `json:"id"`
 		ClientID       string `json:"client_id"`
@@ -667,24 +847,32 @@ func handleAdminChats(w http.ResponseWriter, r *http.Request) {
 		UnreadForAdmin int    `json:"unread_for_admin"`
 		LastMessageAt  string `json:"last_message_at"`
 	}
-
-	items := make([]chatItem, 0, len(store.chats))
-	for _, chat := range store.chats {
-		clientName := ""
-		if client, ok := store.clients[chat.ClientID]; ok {
-			clientName = client.Name
-		}
+	chats, err := store.listAllChats()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	clients, err := store.listClients()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	clientNames := make(map[string]string, len(clients))
+	for _, c := range clients {
+		clientNames[c.ID] = c.Name
+	}
+	items := make([]chatItem, 0, len(chats))
+	for _, chat := range chats {
 		items = append(items, chatItem{
 			ID:             chat.ID,
 			ClientID:       chat.ClientID,
-			ClientName:     clientName,
+			ClientName:     clientNames[chat.ClientID],
 			Title:          chat.Title,
 			Persona:        chat.Persona,
 			UnreadForAdmin: chat.UnreadForAdmin,
 			LastMessageAt:  chat.LastMessageAt.Format(time.RFC3339),
 		})
 	}
-
 	writeJSON(w, http.StatusOK, jsonMap{"items": items})
 }
 
@@ -720,19 +908,24 @@ func handleAdminChatRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAdminChatMessages(w http.ResponseWriter, r *http.Request, chatID string) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	chat, ok := store.chats[chatID]
-	if !ok {
+	chat, err := store.getChatByID(chatID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if chat == nil {
 		writeJSON(w, http.StatusNotFound, jsonMap{"error": "chat not found"})
 		return
 	}
 
-	client := store.clients[chat.ClientID]
 	clientName := ""
-	if client != nil {
+	if client, err := store.getClientByID(chat.ClientID); err == nil && client != nil {
 		clientName = client.Name
+	}
+	messages, err := store.listMessages(chatID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
 	}
 
 	writeJSON(w, http.StatusOK, jsonMap{
@@ -744,7 +937,7 @@ func handleAdminChatMessages(w http.ResponseWriter, r *http.Request, chatID stri
 			"client_name":      clientName,
 			"unread_for_admin": chat.UnreadForAdmin,
 		},
-		"messages": store.messages[chatID],
+		"messages": messages,
 	})
 }
 
@@ -757,38 +950,36 @@ func handleAdminSendMessage(w http.ResponseWriter, r *http.Request, chatID strin
 		return
 	}
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	chat, ok := store.chats[chatID]
-	if !ok {
+	chat, err := store.getChatByID(chatID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if chat == nil {
 		writeJSON(w, http.StatusNotFound, jsonMap{"error": "chat not found"})
 		return
 	}
-
-	msg := &Message{
-		ID:        nextID("msg"),
-		ChatID:    chatID,
-		Sender:    "admin",
-		Content:   req.Content,
-		CreatedAt: time.Now(),
+	msg, err := store.insertMessage(chatID, "admin", req.Content, time.Now())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
 	}
-	store.messages[chatID] = append(store.messages[chatID], msg)
-	chat.LastMessageAt = msg.CreatedAt
+	_ = store.updateChatLastMessage(chatID, msg.CreatedAt)
 
 	writeJSON(w, http.StatusCreated, msg)
 }
 
 func handleAdminMarkRead(w http.ResponseWriter, r *http.Request, chatID string) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	chat, ok := store.chats[chatID]
-	if !ok {
+	chat, err := store.getChatByID(chatID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if chat == nil {
 		writeJSON(w, http.StatusNotFound, jsonMap{"error": "chat not found"})
 		return
 	}
-	chat.UnreadForAdmin = 0
+	_ = store.updateChatUnread(chatID, 0)
 	writeJSON(w, http.StatusOK, jsonMap{"ok": true})
 }
 
@@ -814,19 +1005,19 @@ func handleClientRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleClientChatsList(w http.ResponseWriter, r *http.Request, clientID string) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	if _, ok := store.clients[clientID]; !ok {
+	client, err := store.getClientByID(clientID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if client == nil {
 		writeJSON(w, http.StatusNotFound, jsonMap{"error": "client not found"})
 		return
 	}
-
-	items := make([]*Chat, 0)
-	for _, chat := range store.chats {
-		if chat.ClientID == clientID {
-			items = append(items, chat)
-		}
+	items, err := store.listChatsByClient(clientID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
 	}
 	writeJSON(w, http.StatusOK, jsonMap{"items": items})
 }
@@ -841,10 +1032,12 @@ func handleClientChatCreate(w http.ResponseWriter, r *http.Request, clientID str
 		return
 	}
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	if _, ok := store.clients[clientID]; !ok {
+	client, err := store.getClientByID(clientID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if client == nil {
 		writeJSON(w, http.StatusNotFound, jsonMap{"error": "client not found"})
 		return
 	}
@@ -854,17 +1047,11 @@ func handleClientChatCreate(w http.ResponseWriter, r *http.Request, clientID str
 		return
 	}
 
-	chat := &Chat{
-		ID:            nextID("chat"),
-		ClientID:      clientID,
-		Title:         strings.TrimSpace(req.Title),
-		Persona:       strings.TrimSpace(req.Persona),
-		LastMessageAt: time.Now(),
+	chat, err := store.createChat(clientID, req.Title, req.Persona)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
 	}
-	// Title can be filled from the first user message.
-	store.chats[chat.ID] = chat
-	store.messages[chat.ID] = []*Message{}
-
 	writeJSON(w, http.StatusCreated, chat)
 }
 
@@ -890,14 +1077,21 @@ func handleChatRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleChatMessagesList(w http.ResponseWriter, r *http.Request, chatID string) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	if _, ok := store.chats[chatID]; !ok {
+	chat, err := store.getChatByID(chatID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if chat == nil {
 		writeJSON(w, http.StatusNotFound, jsonMap{"error": "chat not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, jsonMap{"items": store.messages[chatID]})
+	items, err := store.listMessages(chatID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, jsonMap{"items": items})
 }
 
 func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string) {
@@ -915,34 +1109,35 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 		return
 	}
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	chat, ok := store.chats[chatID]
-	if !ok {
+	chat, err := store.getChatByID(chatID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if chat == nil {
 		writeJSON(w, http.StatusNotFound, jsonMap{"error": "chat not found"})
 		return
 	}
 
 	now := time.Now()
-	if dup := findRecentClientDuplicate(store.messages[chatID], req.Content, now, 5*time.Second); dup != nil {
+	if dup, err := store.findRecentClientDuplicate(chatID, req.Content, now, 5*time.Second); err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	} else if dup != nil {
 		log.Printf("chat_send dedup req_id=%s chat_id=%s latency_ms=%d", reqID, chatID, time.Since(start).Milliseconds())
 		writeJSON(w, http.StatusOK, dup)
 		return
 	}
 
-	msg := &Message{
-		ID:        nextID("msg"),
-		ChatID:    chatID,
-		Sender:    "client",
-		Content:   req.Content,
-		CreatedAt: now,
+	msg, err := store.insertMessage(chatID, "client", req.Content, now)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
 	}
-	store.messages[chatID] = append(store.messages[chatID], msg)
-	chat.UnreadForAdmin++
-	chat.LastMessageAt = msg.CreatedAt
+	_ = store.updateChatUnread(chatID, chat.UnreadForAdmin+1)
+	_ = store.updateChatLastMessage(chatID, msg.CreatedAt)
 	if strings.TrimSpace(chat.Title) == "" {
-		chat.Title = firstLine(req.Content, 60)
+		_ = store.updateChatTitle(chatID, firstLine(req.Content, 60))
 	}
 
 	writeJSON(w, http.StatusCreated, msg)
@@ -959,43 +1154,18 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 			log.Printf("llm_error req_id=%s chat_id=%s status=%d err=%v body=%s", requestID, chatID, status, err, body)
 			resp = "Sorry, I cannot respond right now. Please try again."
 		}
-		store.mu.Lock()
-		defer store.mu.Unlock()
-		if chat, ok := store.chats[chatID]; ok {
-			if msgs := store.messages[chatID]; len(msgs) > 0 {
-				last := msgs[len(msgs)-1]
-				if last.Sender == "admin" && last.Content == resp {
-					return
-				}
+		if last, err := store.getLastAdminMessage(chatID); err == nil && last != nil {
+			if last.Content == resp {
+				return
 			}
-			reply := &Message{
-				ID:        nextID("msg"),
-				ChatID:    chatID,
-				Sender:    "admin",
-				Content:   resp,
-				CreatedAt: time.Now(),
-			}
-			store.messages[chatID] = append(store.messages[chatID], reply)
-			chat.LastMessageAt = reply.CreatedAt
 		}
+		reply, err := store.insertMessage(chatID, "admin", resp, time.Now())
+		if err != nil {
+			log.Printf("llm_store_error req_id=%s chat_id=%s err=%v", requestID, chatID, err)
+			return
+		}
+		_ = store.updateChatLastMessage(chatID, reply.CreatedAt)
 	}(chatID, persona, req.Content, reqID)
-}
-
-func findRecentClientDuplicate(msgs []*Message, content string, now time.Time, window time.Duration) *Message {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		m := msgs[i]
-		if m.Sender != "client" {
-			continue
-		}
-		if m.Content == content && now.Sub(m.CreatedAt) <= window {
-			return m
-		}
-		// If we already passed the window, stop scanning
-		if now.Sub(m.CreatedAt) > window {
-			return nil
-		}
-	}
-	return nil
 }
 
 func firstLine(text string, max int) string {

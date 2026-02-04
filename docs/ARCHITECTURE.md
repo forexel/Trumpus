@@ -3,7 +3,7 @@
 ## Modules
 
 - Auth
-  - Email/password (MVP, in-memory)
+  - Email/password (Postgres)
   - Google OAuth (web client)
   - Reset password (stub; email sending not wired)
 - Client Chat
@@ -22,7 +22,7 @@
 
 - API (Go)
   - REST for auth, chats, messages, admin
-  - In-memory storage in MVP (PostgreSQL planned)
+  - PostgreSQL storage (clients, chats, messages, users)
   - Future WebSocket for realtime
 - DB (PostgreSQL)
   - users, chats, messages, admin_users
