@@ -49,6 +49,7 @@ services:
     container_name: trumpus_client_web
     environment:
       VITE_API_BASE: http://localhost:8000/api/v1
+      VITE_MOCK_MODE: "false"
     ports:
       - "5173:5173"
     depends_on:
