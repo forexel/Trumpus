@@ -47,6 +47,7 @@ export default function App() {
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/auth/google/callback" element={<GoogleCallbackPage />} />
+          <Route path="/auth/google/callback/*" element={<GoogleCallbackPage />} />
           <Route path="/chats" element={token ? <ChatsPage /> : <Navigate to="/login" replace />} />
           <Route path="/chats/new" element={token ? <NewChatPage /> : <Navigate to="/login" replace />} />
           <Route path="/chats/:id" element={token ? <ChatDetailPage /> : <Navigate to="/login" replace />} />
