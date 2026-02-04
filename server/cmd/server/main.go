@@ -290,9 +290,9 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-func callLLM(baseURL, chatID, persona, content string) (string, error) {
+func callLLM(baseURL, chatID, persona, content string) (string, int, string, error) {
 	if strings.TrimSpace(baseURL) == "" {
-		return "", fmt.Errorf("llm base not set")
+		return "", 0, "", fmt.Errorf("llm base not set")
 	}
 	payload := jsonMap{
 		"chat_id": chatID,
@@ -302,24 +302,24 @@ func callLLM(baseURL, chatID, persona, content string) (string, error) {
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/respond", strings.NewReader(string(body)))
 	if err != nil {
-		return "", err
+		return "", 0, "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{Timeout: 120 * time.Second}
 	res, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", 0, "", err
 	}
 	defer res.Body.Close()
 	respBody, _ := io.ReadAll(res.Body)
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return "", fmt.Errorf("llm error: %s", string(respBody))
+		return "", res.StatusCode, string(respBody), fmt.Errorf("llm error: %s", string(respBody))
 	}
 	var resp llmResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return "", err
+		return "", res.StatusCode, string(respBody), err
 	}
-	return resp.Content, nil
+	return resp.Content, res.StatusCode, string(respBody), nil
 }
 
 func handleGoogleStart(cfg googleConfig) http.HandlerFunc {
@@ -901,6 +901,11 @@ func handleChatMessagesList(w http.ResponseWriter, r *http.Request, chatID strin
 }
 
 func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string) {
+	start := time.Now()
+	reqID := r.Header.Get("X-Request-Id")
+	if reqID == "" {
+		reqID = nextID("req")
+	}
 	var req struct {
 		Content string `json:"content"`
 		Persona string `json:"persona"`
@@ -919,12 +924,19 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 		return
 	}
 
+	now := time.Now()
+	if dup := findRecentClientDuplicate(store.messages[chatID], req.Content, now, 5*time.Second); dup != nil {
+		log.Printf("chat_send dedup req_id=%s chat_id=%s latency_ms=%d", reqID, chatID, time.Since(start).Milliseconds())
+		writeJSON(w, http.StatusOK, dup)
+		return
+	}
+
 	msg := &Message{
 		ID:        nextID("msg"),
 		ChatID:    chatID,
 		Sender:    "client",
 		Content:   req.Content,
-		CreatedAt: time.Now(),
+		CreatedAt: now,
 	}
 	store.messages[chatID] = append(store.messages[chatID], msg)
 	chat.UnreadForAdmin++
@@ -934,15 +946,17 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 	}
 
 	writeJSON(w, http.StatusCreated, msg)
+	log.Printf("chat_send req_id=%s chat_id=%s sender=client latency_ms=%d", reqID, chatID, time.Since(start).Milliseconds())
 
 	persona := chat.Persona
 	if strings.TrimSpace(req.Persona) != "" {
 		persona = req.Persona
 	}
 	llmBase := os.Getenv("LLM_BASE")
-	go func(chatID, persona, content string) {
-		resp, err := callLLM(llmBase, chatID, persona, content)
+	go func(chatID, persona, content, requestID string) {
+		resp, status, body, err := callLLM(llmBase, chatID, persona, content)
 		if err != nil || strings.TrimSpace(resp) == "" {
+			log.Printf("llm_error req_id=%s chat_id=%s status=%d err=%v body=%s", requestID, chatID, status, err, body)
 			resp = "LLM is not configured."
 		}
 		store.mu.Lock()
@@ -964,7 +978,24 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 			store.messages[chatID] = append(store.messages[chatID], reply)
 			chat.LastMessageAt = reply.CreatedAt
 		}
-	}(chatID, persona, req.Content)
+	}(chatID, persona, req.Content, reqID)
+}
+
+func findRecentClientDuplicate(msgs []*Message, content string, now time.Time, window time.Duration) *Message {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Sender != "client" {
+			continue
+		}
+		if m.Content == content && now.Sub(m.CreatedAt) <= window {
+			return m
+		}
+		// If we already passed the window, stop scanning
+		if now.Sub(m.CreatedAt) > window {
+			return nil
+		}
+	}
+	return nil
 }
 
 func firstLine(text string, max int) string {

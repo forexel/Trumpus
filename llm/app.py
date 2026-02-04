@@ -1,13 +1,25 @@
 import os
+import random
+import time
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 
 API_BASE = os.getenv("API_BASE", "http://api:8000/api/v1").rstrip("/")
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "admin-token")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "sk-proj-REDACTED").strip()
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+OPENROUTER_MODEL_PRIMARY = os.getenv("OPENROUTER_MODEL_PRIMARY", os.getenv("OPENROUTER_MODEL", "")).strip()
+OPENROUTER_MODEL_FALLBACK = os.getenv("OPENROUTER_MODEL_FALLBACK", "").strip()
+
+CONNECT_TIMEOUT = float(os.getenv("OPENROUTER_CONNECT_TIMEOUT", "10"))
+READ_TIMEOUT = float(os.getenv("OPENROUTER_READ_TIMEOUT", "120"))
+WRITE_TIMEOUT = float(os.getenv("OPENROUTER_WRITE_TIMEOUT", "30"))
+POOL_TIMEOUT = float(os.getenv("OPENROUTER_POOL_TIMEOUT", "10"))
+
+MAX_ATTEMPTS = int(os.getenv("OPENROUTER_MAX_ATTEMPTS", "5"))
+INITIAL_DELAY = float(os.getenv("OPENROUTER_INITIAL_DELAY", "0.5"))
+MAX_DELAY = float(os.getenv("OPENROUTER_MAX_DELAY", "8"))
 
 app = FastAPI()
 
@@ -107,36 +119,108 @@ def health():
 
 
 @app.post("/respond")
-async def respond(req: RespondRequest):
+async def respond(req: RespondRequest, response: Response):
     if not req.chat_id or not req.content:
         raise HTTPException(status_code=400, detail="chat_id and content are required")
 
-    if not OPENAI_API_KEY:
-        return {"content": "LLM is not configured. Set OPENAI_API_KEY."}
+    if not OPENROUTER_API_KEY:
+        response.status_code = 503
+        return {"error": "llm_not_configured", "detail": "OPENROUTER_API_KEY is not set"}
+
+    model_primary = OPENROUTER_MODEL_PRIMARY or OPENROUTER_MODEL_FALLBACK
+    if not model_primary:
+        response.status_code = 503
+        return {"error": "llm_not_configured", "detail": "OPENROUTER_MODEL_PRIMARY is not set"}
 
     persona = (req.persona or "Donald Trump").strip()
     system_prompt = PERSONA_PROMPTS.get(persona, PERSONA_PROMPTS["Donald Trump"])
-    payload = {
-        "model": OPENAI_MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": req.content},
-        ],
-        "temperature": 0.9,
-        "max_tokens": 500,
-    }
+    timeout = httpx.Timeout(connect=CONNECT_TIMEOUT, read=READ_TIMEOUT, write=WRITE_TIMEOUT, pool=POOL_TIMEOUT)
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        res = await client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
-        if res.status_code >= 400:
-            raise HTTPException(status_code=502, detail="OpenAI API error")
-        data = res.json()
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        return {"content": content or "LLM did not return a response."}
+    async def call_openrouter(model: str):
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": req.content},
+            ],
+            "temperature": 0.9,
+            "max_tokens": 500,
+        }
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            return await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+
+    attempts = 0
+    delay = INITIAL_DELAY
+    last_error = None
+    used_model = model_primary
+    start_time = time.time()
+
+    while attempts < MAX_ATTEMPTS:
+        attempts += 1
+        if OPENROUTER_MODEL_FALLBACK and attempts >= 3:
+            used_model = OPENROUTER_MODEL_FALLBACK
+
+        attempt_start = time.time()
+        try:
+            res = await call_openrouter(used_model)
+            elapsed_ms = int((time.time() - attempt_start) * 1000)
+            status = res.status_code
+            print(f"llm_call chat_id={req.chat_id} attempt={attempts} model={used_model} status={status} latency_ms={elapsed_ms}")
+
+            if 200 <= status < 300:
+                data = res.json()
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                return {
+                    "content": content or "LLM did not return a response.",
+                    "model": used_model,
+                    "latency_ms": int((time.time() - start_time) * 1000),
+                }
+
+            if status == 429:
+                retry_after = res.headers.get("Retry-After")
+                response.status_code = 429
+                last_error = {"error": "rate_limited", "detail": "OpenRouter rate limited", "retry_after": retry_after}
+            elif status in (500, 502, 503, 504):
+                response.status_code = 503 if status in (503, 504) else 502
+                last_error = {"error": "upstream_unavailable", "detail": f"OpenRouter error {status}"}
+            else:
+                response.status_code = status
+                return {"error": "upstream_error", "detail": f"OpenRouter error {status}"}
+        except httpx.ReadTimeout:
+            print(f"llm_timeout chat_id={req.chat_id} attempt={attempts} model={used_model} stage=read")
+            response.status_code = 504
+            last_error = {"error": "upstream_timeout", "detail": "OpenRouter read timeout"}
+        except httpx.ConnectTimeout:
+            print(f"llm_timeout chat_id={req.chat_id} attempt={attempts} model={used_model} stage=connect")
+            response.status_code = 504
+            last_error = {"error": "upstream_timeout", "detail": "OpenRouter connect timeout"}
+        except httpx.RequestError as exc:
+            print(f"llm_error chat_id={req.chat_id} attempt={attempts} model={used_model} err={exc}")
+            response.status_code = 503
+            last_error = {"error": "upstream_unavailable", "detail": f"OpenRouter request error: {exc}"}
+
+        # backoff with jitter
+        retry_after = None
+        if last_error and isinstance(last_error, dict):
+            retry_after = last_error.get("retry_after")
+        if retry_after:
+            try:
+                time.sleep(float(retry_after))
+            except ValueError:
+                pass
+        else:
+            time.sleep(delay + random.random() * (0.2 * delay))
+            delay = min(delay * 2, MAX_DELAY)
+
+    if last_error:
+        return last_error
+
+    response.status_code = 502
+    return {"error": "upstream_error", "detail": "Unknown LLM error"}
