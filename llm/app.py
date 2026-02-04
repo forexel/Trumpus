@@ -209,6 +209,9 @@ async def respond(req: RespondRequest, response: Response):
             elif status == 404:
                 response.status_code = 503
                 last_error = {"error": "model_not_found", "detail": f"OpenRouter model not found: {used_model}"}
+            elif status in (400, 401):
+                response.status_code = 503
+                last_error = {"error": "auth_or_bad_request", "detail": f"OpenRouter error {status} for model {used_model}"}
             elif status in (500, 502, 503, 504):
                 response.status_code = 503 if status in (503, 504) else 502
                 last_error = {"error": "upstream_unavailable", "detail": f"OpenRouter error {status}"}
