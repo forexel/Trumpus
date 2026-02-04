@@ -43,6 +43,7 @@ export default function ChatDetailPage() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const pendingAIRef = useRef(false)
+  const pollingActiveRef = useRef(true)
   const { theme, toggleTheme } = useTheme()
   
   // Get persona info from chat
@@ -116,9 +117,17 @@ export default function ChatDetailPage() {
     }
   }, [loading])
 
+  useEffect(() => {
+    pollingActiveRef.current = true
+    return () => {
+      pollingActiveRef.current = false
+    }
+  }, [])
+
   async function pollForAI(chatID: string, previousCount: number) {
-    const maxAttempts = 20
+    const maxAttempts = 30
     for (let i = 0; i < maxAttempts; i += 1) {
+      if (!pollingActiveRef.current) return
       await new Promise(r => setTimeout(r, 1000))
       const res = await fetchMessages(chatID)
       if (res.items.length > previousCount) {
@@ -128,8 +137,11 @@ export default function ChatDetailPage() {
         return
       }
     }
-    setTyping(false)
-    pendingAIRef.current = false
+    // keep loader visible and continue polling
+    if (!pollingActiveRef.current) return
+    setTimeout(() => {
+      pollForAI(chatID, previousCount)
+    }, 2000)
   }
 
   async function onSend() {

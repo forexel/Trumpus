@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,7 +13,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -67,8 +68,7 @@ type Store struct {
 }
 
 var (
-	store     *Store
-	idCounter int64
+	store *Store
 
 	googleStateMu sync.Mutex
 	googleStates  = make(map[string]googleStateEntry)
@@ -371,8 +371,10 @@ func (s *Store) getLastAdminMessage(chatID string) (*Message, error) {
 }
 
 func nextID(prefix string) string {
-	n := atomic.AddInt64(&idCounter, 1)
-	return fmt.Sprintf("%s_%d", prefix, n)
+	buf := make([]byte, 6)
+	_, _ = rand.Read(buf)
+	suffix := hex.EncodeToString(buf)
+	return fmt.Sprintf("%s_%d_%s", prefix, time.Now().UnixNano(), suffix)
 }
 
 func withCORS(next http.HandlerFunc) http.HandlerFunc {
