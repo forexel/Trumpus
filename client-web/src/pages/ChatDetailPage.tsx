@@ -44,6 +44,7 @@ export default function ChatDetailPage() {
   const inputRef = useRef<HTMLInputElement | null>(null)
   const pendingAIRef = useRef(false)
   const pollingActiveRef = useRef(true)
+  const pollingTokenRef = useRef(0)
   const { theme, toggleTheme } = useTheme()
   
   // Get persona info from chat
@@ -125,9 +126,10 @@ export default function ChatDetailPage() {
   }, [])
 
   async function pollForAI(chatID: string, previousCount: number) {
+    const token = pollingTokenRef.current
     const maxAttempts = 30
     for (let i = 0; i < maxAttempts; i += 1) {
-      if (!pollingActiveRef.current) return
+      if (!pollingActiveRef.current || token !== pollingTokenRef.current) return
       await new Promise(r => setTimeout(r, 1000))
       const res = await fetchMessages(chatID)
       if (res.items.length > previousCount) {
@@ -138,7 +140,7 @@ export default function ChatDetailPage() {
       }
     }
     // keep loader visible and continue polling
-    if (!pollingActiveRef.current) return
+    if (!pollingActiveRef.current || token !== pollingTokenRef.current) return
     setTimeout(() => {
       pollForAI(chatID, previousCount)
     }, 2000)
@@ -184,8 +186,15 @@ export default function ChatDetailPage() {
       }
     } else {
       // Wait for LLM response via API
+      pollingTokenRef.current += 1
       pollForAI(chatId, updatedMessages.length)
     }
+  }
+
+  function stopWaiting() {
+    pollingTokenRef.current += 1
+    pendingAIRef.current = false
+    setTyping(false)
   }
 
   const markdownComponents = useMemo(
@@ -290,6 +299,11 @@ export default function ChatDetailPage() {
         >
           <img src={eagleIcon} alt="Send" className={`eagle-send-icon ${typing ? 'flying' : ''}`} />
         </button>
+        {typing ? (
+          <button className="retry-btn" type="button" onClick={stopWaiting}>
+            Stop
+          </button>
+        ) : null}
       </div>
     </div>
   )
