@@ -948,6 +948,12 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 		store.mu.Lock()
 		defer store.mu.Unlock()
 		if chat, ok := store.chats[chatID]; ok {
+			if msgs := store.messages[chatID]; len(msgs) > 0 {
+				last := msgs[len(msgs)-1]
+				if last.Sender == "admin" && last.Content == resp {
+					return
+				}
+			}
 			reply := &Message{
 				ID:        nextID("msg"),
 				ChatID:    chatID,

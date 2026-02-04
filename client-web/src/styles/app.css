@@ -57,6 +57,8 @@
 
 html, body, #root {
   height: 100%;
+  background: var(--bg);
+  overscroll-behavior: none;
 }
 
 body {
@@ -869,7 +871,7 @@ body {
   align-items: flex-end;
   gap: 10px;
   padding: 12px 16px;
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
   background: var(--bg-secondary);
   border-top: 1px solid var(--border);
 }
@@ -878,7 +880,7 @@ body {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 10px;
+  bottom: 0;
   z-index: 5;
 }
 
@@ -1125,6 +1127,7 @@ button.ghost:hover {
 
 .persona-select-list.open {
   overflow: visible;
+  border-radius: 18px 18px 0 0;
 }
 
 .persona-options {
@@ -1169,6 +1172,7 @@ button.ghost:hover {
   cursor: pointer;
   text-align: left;
   transition: background 0.2s ease;
+  border-radius: 0;
 }
 
 .persona-option:hover {
@@ -1177,6 +1181,7 @@ button.ghost:hover {
 
 .persona-option.selected {
   background: #ffffff;
+  border-radius: 16px 16px 0 0;
 }
 
 .persona-option-avatar {
