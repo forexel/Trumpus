@@ -28,7 +28,7 @@ Client app + admin panel + chat server + LLM worker.
 - Chat detail: user bubbles + LLM bubbles with Markdown; typing indicator
 - Admin: sees clients + chats, can reply to chat (basic)
 
-Note: user store is in-memory for now (Go server). Email sending for password reset is not connected yet.
+Note: email sending for password reset is not connected yet.
 
 ## Local Dev (Docker)
 
