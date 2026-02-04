@@ -53,6 +53,47 @@ Scale with:
 - DB tuning / managed Postgres
 - message queue for LLM jobs
 
+## Deployment Model (MVP)
+
+Single host with Docker Compose:
+
+- `client-web` (Vite) on 5173
+- `admin-web` (Vite) on 5174
+- `api` (Go) on 8000
+- `llm` (FastAPI) on 8010 (internal)
+- `db` (Postgres) on 5433 (internal)
+
+Recommended: expose only 80/443 via reverse proxy, keep 8000/5173/5174 internal.
+
+## Runtime Config
+
+Secrets and config are provided via env files:
+
+- Root `.env` (LLM worker)
+  - `OPENROUTER_API_KEY`
+  - `OPENROUTER_MODEL`
+- `server/.env` (API)
+  - `PORT`
+  - `DATABASE_URL`
+  - `GOOGLE_CLIENT_ID`
+  - `GOOGLE_CLIENT_SECRET`
+  - `GOOGLE_OAUTH_CALLBACK_URL`
+  - `LLM_BASE`
+- `client-web/.env` + `admin-web/.env`
+  - `VITE_API_BASE`
+
+## Networking
+
+- Browser clients talk to API via `VITE_API_BASE`.
+- API talks to LLM via `LLM_BASE` (Docker network hostname).
+- LLM never exposed to the public network.
+
+## Security Notes
+
+- Keep LLM API keys server-side only (LLM worker).
+- Use HTTPS in production (Nginx + LetsEncrypt).
+- Restrict allowed origins/hosts in Vite or reverse proxy.
+
 ## LLM Integration
 
 Current flow:
