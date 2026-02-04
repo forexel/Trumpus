@@ -44,6 +44,10 @@ export default function ChatDetailPage() {
   const inputRef = useRef<HTMLInputElement | null>(null)
   const pendingAIRef = useRef(false)
   const { theme, toggleTheme } = useTheme()
+  
+  // Get persona info from chat
+  const persona = chat?.persona ? getPersonaByName(chat.persona) : null
+  const personaName = chat?.persona || 'Donald Trump'
 
   useEffect(() => {
     const clientId = getClientId()
@@ -106,7 +110,7 @@ export default function ChatDetailPage() {
     const content = text
     setText('')
     
-    const msg = await sendMessage(chatId, content, persona?.name)
+    const msg = await sendMessage(chatId, content, personaName)
     const updatedMessages = [...messages, msg]
     setMessages(updatedMessages)
     
@@ -124,7 +128,7 @@ export default function ChatDetailPage() {
     if (MOCK_MODE) {
       // В MOCK_MODE вызываем OpenAI напрямую
       try {
-        const aiResponse = await getAIResponse(persona?.name || 'Donald Trump', updatedMessages)
+        const aiResponse = await getAIResponse(personaName, updatedMessages)
         const aiMsg = saveAIMessage(chatId, aiResponse)
         setMessages([...updatedMessages, aiMsg])
       } catch (error) {
@@ -152,7 +156,6 @@ export default function ChatDetailPage() {
     []
   )
 
-  const persona = chat?.persona ? getPersonaByName(chat.persona) : null
   const displayTitle = chat?.title || (persona ? persona.name : 'New Chat')
 
   return (
