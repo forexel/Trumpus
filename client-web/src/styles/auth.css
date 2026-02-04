@@ -93,7 +93,9 @@ html, body {
 
 .auth-card {
   width: 100%;
-  background: rgba(255, 255, 255, 0.95);
+  --auth-card-bg: rgba(255, 255, 255, 0.95);
+  --auth-input-bg: #ffffff;
+  background: var(--auth-card-bg);
   backdrop-filter: blur(20px);
   border: 3px solid #002868;
   border-radius: 24px;
@@ -135,7 +137,7 @@ html, body {
 .auth-card input {
   width: 100%;
   padding: 11px 14px;
-  background: #ffffff;
+  background: var(--auth-input-bg);
   border: 2px solid #002868;
   border-radius: 12px;
   font-size: 14px;
@@ -152,7 +154,7 @@ html, body {
 .auth-card input:focus {
   outline: none;
   border-color: #BF0A30;
-  background: #ffffff;
+  background: var(--auth-input-bg);
   box-shadow: 0 0 0 4px rgba(191, 10, 48, 0.2);
   color: #1a1a1a;
 }
@@ -221,7 +223,9 @@ html, body {
 
 /* Dark theme overrides */
 [data-theme="dark"] .auth-card {
-  background: rgba(10, 10, 10, 0.92);
+  --auth-card-bg: rgba(10, 10, 10, 0.92);
+  --auth-input-bg: #2b2b2b;
+  background: var(--auth-card-bg);
   border-color: #1f2937;
   box-shadow:
     0 25px 50px -12px rgba(0, 0, 0, 0.7),
@@ -235,7 +239,7 @@ html, body {
 }
 
 [data-theme="dark"] .auth-card input {
-  background: #2b2b2b;
+  background: var(--auth-input-bg);
   border-color: #2a2a2a;
   color: #f3f4f6;
 }
@@ -245,7 +249,7 @@ html, body {
 }
 
 [data-theme="dark"] .auth-card input:focus {
-  background: #2b2b2b;
+  background: var(--auth-input-bg);
   border-color: #BF0A30;
   box-shadow: 0 0 0 4px rgba(191, 10, 48, 0.25);
   color: #f3f4f6;
