@@ -68,6 +68,120 @@ docker compose down -v
 docker compose up -d --build
 ```
 
+### Production: step-by-step (server)
+
+1) Install Docker/Compose
+
+```bash
+sudo apt update
+sudo apt install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker $USER
+```
+
+Log out/in to pick up the docker group.
+
+2) Upload the project
+
+```bash
+scp -r Trumpus user@YOUR_SERVER:/srv/trumpus
+```
+
+3) Create env files
+
+Project root `.env` (for LLM worker):
+
+```bash
+OPENROUTER_API_KEY=...
+OPENROUTER_MODEL=openai/gpt-oss-120b:free
+```
+
+`server/.env` (API):
+
+```bash
+PORT=8000
+DATABASE_URL=postgresql://user:pass@db:5432/trumpus?sslmode=disable
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GOOGLE_OAUTH_CALLBACK_URL=https://YOUR_DOMAIN/api/v1/auth/google/callback
+LLM_BASE=http://llm:8010
+```
+
+Client web env:
+
+`client-web/.env`:
+
+```bash
+VITE_API_BASE=https://YOUR_DOMAIN/api/v1
+```
+
+Admin web env:
+
+`admin-web/.env`:
+
+```bash
+VITE_API_BASE=https://YOUR_DOMAIN/api/v1
+```
+
+4) Build + run
+
+```bash
+cd /srv/trumpus
+docker compose up -d --build
+```
+
+5) Open ports (or put behind reverse proxy)
+
+If no reverse proxy yet, open:
+- 5173 (client web)
+- 5174 (admin web)
+- 8000 (API)
+
+```bash
+sudo ufw allow 5173
+sudo ufw allow 5174
+sudo ufw allow 8000
+```
+
+### Reverse proxy (recommended)
+
+Use Nginx + SSL (LetsEncrypt). Example vhost:
+
+```
+server {
+  server_name YOUR_DOMAIN;
+  location / {
+    proxy_pass http://127.0.0.1:5173;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+  }
+  location /api/ {
+    proxy_pass http://127.0.0.1:8000/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+  }
+}
+```
+
+If you host admin on a subdomain, point it to `5174`.
+
+### Start on boot
+
+If you want auto-start on reboot:
+
+```bash
+sudo systemctl enable docker
+```
+
+Docker compose will restart containers if `restart:` is set in `docker-compose.yml`.
+
 ### Required Env Vars
 
 API:
