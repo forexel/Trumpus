@@ -1152,7 +1152,12 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 		resp, status, body, err := callLLM(llmBase, chatID, persona, content)
 		if err != nil || strings.TrimSpace(resp) == "" {
 			log.Printf("llm_error req_id=%s chat_id=%s status=%d err=%v body=%s", requestID, chatID, status, err, body)
-			resp = "Sorry, I cannot respond right now. Please try again."
+			time.Sleep(2 * time.Second)
+			resp, status, body, err = callLLM(llmBase, chatID, persona, content)
+		}
+		if err != nil || strings.TrimSpace(resp) == "" {
+			log.Printf("llm_error_final req_id=%s chat_id=%s status=%d err=%v body=%s", requestID, chatID, status, err, body)
+			resp = "LLM is busy, try later."
 		}
 		if last, err := store.getLastAdminMessage(chatID); err == nil && last != nil {
 			if last.Content == resp {

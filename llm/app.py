@@ -11,13 +11,15 @@ ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "admin-token")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL_PRIMARY = os.getenv("OPENROUTER_MODEL_PRIMARY", os.getenv("OPENROUTER_MODEL", "")).strip()
 OPENROUTER_MODEL_FALLBACK = os.getenv("OPENROUTER_MODEL_FALLBACK", "").strip()
+OPENROUTER_MODEL_FALLBACK_2 = os.getenv("OPENROUTER_MODEL_FALLBACK_2", "").strip()
+OPENROUTER_MODEL_FALLBACK_3 = os.getenv("OPENROUTER_MODEL_FALLBACK_3", "").strip()
 
 CONNECT_TIMEOUT = float(os.getenv("OPENROUTER_CONNECT_TIMEOUT", "10"))
 READ_TIMEOUT = float(os.getenv("OPENROUTER_READ_TIMEOUT", "120"))
 WRITE_TIMEOUT = float(os.getenv("OPENROUTER_WRITE_TIMEOUT", "30"))
 POOL_TIMEOUT = float(os.getenv("OPENROUTER_POOL_TIMEOUT", "10"))
 
-MAX_ATTEMPTS = int(os.getenv("OPENROUTER_MAX_ATTEMPTS", "5"))
+MAX_ATTEMPTS = int(os.getenv("OPENROUTER_MAX_ATTEMPTS", "10"))
 INITIAL_DELAY = float(os.getenv("OPENROUTER_INITIAL_DELAY", "0.5"))
 MAX_DELAY = float(os.getenv("OPENROUTER_MAX_DELAY", "8"))
 
@@ -127,8 +129,17 @@ async def respond(req: RespondRequest, response: Response):
         response.status_code = 503
         return {"error": "llm_not_configured", "detail": "OPENROUTER_API_KEY is not set"}
 
-    model_primary = OPENROUTER_MODEL_PRIMARY or OPENROUTER_MODEL_FALLBACK
-    if not model_primary:
+    model_candidates = [
+        m
+        for m in [
+            OPENROUTER_MODEL_PRIMARY,
+            OPENROUTER_MODEL_FALLBACK,
+            OPENROUTER_MODEL_FALLBACK_2,
+            OPENROUTER_MODEL_FALLBACK_3,
+        ]
+        if m
+    ]
+    if not model_candidates:
         response.status_code = 503
         return {"error": "llm_not_configured", "detail": "OPENROUTER_MODEL_PRIMARY is not set"}
 
@@ -159,13 +170,13 @@ async def respond(req: RespondRequest, response: Response):
     attempts = 0
     delay = INITIAL_DELAY
     last_error = None
-    used_model = model_primary
+    used_model = model_candidates[0]
     start_time = time.time()
 
     while attempts < MAX_ATTEMPTS:
         attempts += 1
-        if OPENROUTER_MODEL_FALLBACK and attempts >= 3:
-            used_model = OPENROUTER_MODEL_FALLBACK
+        idx = min(attempts - 1, len(model_candidates) - 1)
+        used_model = model_candidates[idx]
 
         attempt_start = time.time()
         try:
@@ -177,11 +188,16 @@ async def respond(req: RespondRequest, response: Response):
             if 200 <= status < 300:
                 data = res.json()
                 content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                return {
-                    "content": content or "LLM did not return a response.",
-                    "model": used_model,
-                    "latency_ms": int((time.time() - start_time) * 1000),
-                }
+                if not content:
+                    response.status_code = 503
+                    last_error = {"error": "empty_response", "detail": "LLM returned empty content"}
+                    # fall through to retry/backoff
+                else:
+                    return {
+                        "content": content,
+                        "model": used_model,
+                        "latency_ms": int((time.time() - start_time) * 1000),
+                    }
 
             if status == 429:
                 retry_after = res.headers.get("Retry-After")
@@ -220,7 +236,8 @@ async def respond(req: RespondRequest, response: Response):
             delay = min(delay * 2, MAX_DELAY)
 
     if last_error:
-        return last_error
+        response.status_code = 503
+        return {"error": "llm_busy", "detail": "LLM is busy, try later"}
 
     response.status_code = 502
     return {"error": "upstream_error", "detail": "Unknown LLM error"}
