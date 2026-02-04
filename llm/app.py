@@ -193,6 +193,7 @@ async def respond(req: RespondRequest, response: Response):
                     last_error = {"error": "empty_response", "detail": "LLM returned empty content"}
                     # fall through to retry/backoff
                 else:
+                    response.status_code = 200
                     return {
                         "content": content,
                         "model": used_model,
