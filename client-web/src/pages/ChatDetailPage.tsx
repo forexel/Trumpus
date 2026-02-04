@@ -78,6 +78,33 @@ export default function ChatDetailPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // Check if we need AI response after loading (e.g., message sent from NewChatPage)
+  useEffect(() => {
+    if (loading || !chat || messages.length === 0 || typing || pendingAIRef.current) return
+    
+    const lastMessage = messages[messages.length - 1]
+    // If last message is from user, we need AI response
+    if (lastMessage.sender === 'client' && MOCK_MODE) {
+      pendingAIRef.current = true
+      setTyping(true)
+      
+      getAIResponse(chat.persona || 'Donald Trump', messages)
+        .then(aiResponse => {
+          const aiMsg = saveAIMessage(chatId, aiResponse)
+          setMessages(prev => [...prev, aiMsg])
+        })
+        .catch(error => {
+          console.error('AI response error:', error)
+          const errorMsg = saveAIMessage(chatId, 'Sorry, I cannot respond right now. Please try again.')
+          setMessages(prev => [...prev, errorMsg])
+        })
+        .finally(() => {
+          setTyping(false)
+          pendingAIRef.current = false
+        })
+    }
+  }, [loading, chat, messages.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Focus input on mount
   useEffect(() => {
     if (!loading) {
