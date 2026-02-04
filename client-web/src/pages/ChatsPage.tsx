@@ -352,23 +352,21 @@ export default function ChatsPage() {
 
       {!hasChats ? (
         <div className="composer-bottom composer-fixed">
-          <div className="composer-wrapper">
-            <input
-              placeholder="Ask me something"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleStartFromEmpty()}
-              disabled={sending}
-            />
-            <button
-              className="send-btn eagle-btn"
-              onClick={handleStartFromEmpty}
-              disabled={sending}
-              title={`Start chat with ${selectedPersona.name}`}
-            >
-              <img src={eagleIcon} alt="Send" className={`eagle-send-icon ${sending ? 'flying' : ''}`} />
-            </button>
-          </div>
+          <input
+            placeholder="Type a message..."
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleStartFromEmpty()}
+            disabled={sending}
+          />
+          <button
+            className="send-btn eagle-btn"
+            onClick={handleStartFromEmpty}
+            disabled={sending}
+            title={`Start chat with ${selectedPersona.name}`}
+          >
+            <img src={eagleIcon} alt="Send" className={`eagle-send-icon ${sending ? 'flying' : ''}`} />
+          </button>
         </div>
       ) : null}
 
