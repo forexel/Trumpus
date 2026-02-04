@@ -127,7 +127,7 @@ export default function ChatDetailPage() {
 
   async function pollForAI(chatID: string, previousCount: number) {
     const token = pollingTokenRef.current
-    const maxAttempts = 30
+    const maxAttempts = 10
     for (let i = 0; i < maxAttempts; i += 1) {
       if (!pollingActiveRef.current || token !== pollingTokenRef.current) return
       await new Promise(r => setTimeout(r, 1000))
@@ -139,11 +139,9 @@ export default function ChatDetailPage() {
         return
       }
     }
-    // keep loader visible and continue polling
     if (!pollingActiveRef.current || token !== pollingTokenRef.current) return
-    setTimeout(() => {
-      pollForAI(chatID, previousCount)
-    }, 2000)
+    setTyping(false)
+    pendingAIRef.current = false
   }
 
   async function onSend() {
