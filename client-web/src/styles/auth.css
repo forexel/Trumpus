@@ -219,6 +219,38 @@ html, body {
   transition: all 0.3s ease;
 }
 
+/* Dark theme overrides */
+[data-theme="dark"] .auth-card {
+  background: rgba(10, 10, 10, 0.92);
+  border-color: #1f2937;
+  box-shadow:
+    0 25px 50px -12px rgba(0, 0, 0, 0.7),
+    0 0 0 4px #7f1d1d,
+    0 0 0 8px #0f172a;
+}
+
+[data-theme="dark"] .auth-card h1,
+[data-theme="dark"] .auth-card label {
+  color: #e5e7eb;
+}
+
+[data-theme="dark"] .auth-card input {
+  background: #111111;
+  border-color: #2a2a2a;
+  color: #f3f4f6;
+}
+
+[data-theme="dark"] .auth-card input::placeholder {
+  color: #6b7280;
+}
+
+[data-theme="dark"] .auth-card input:focus {
+  background: #111111;
+  border-color: #BF0A30;
+  box-shadow: 0 0 0 4px rgba(191, 10, 48, 0.25);
+  color: #f3f4f6;
+}
+
 .btn-google:hover {
   background: #001a4d;
   border-color: #001a4d;
