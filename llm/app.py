@@ -203,6 +203,9 @@ async def respond(req: RespondRequest, response: Response):
                 retry_after = res.headers.get("Retry-After")
                 response.status_code = 429
                 last_error = {"error": "rate_limited", "detail": "OpenRouter rate limited", "retry_after": retry_after}
+            elif status == 402:
+                response.status_code = 503
+                last_error = {"error": "payment_required", "detail": "OpenRouter payment required for model"}
             elif status == 404:
                 response.status_code = 503
                 last_error = {"error": "model_not_found", "detail": f"OpenRouter model not found: {used_model}"}
