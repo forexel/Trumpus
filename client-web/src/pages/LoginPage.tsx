@@ -2,6 +2,8 @@ import { FormEvent, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { login } from '../lib/api'
 import googleIcon from '../assets/google.svg'
+import appleIcon from '../assets/Apple_Icon.svg'
+import googlePlayIcon from '../assets/GooglePlay_Icon.svg'
 import eagleIcon from '../assets/eagle.png'
 
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000/api/v1'
@@ -9,6 +11,7 @@ const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http:
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({})
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
@@ -16,8 +19,11 @@ export default function LoginPage() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     setError('')
-    if (!email || !password) {
-      setError('Fill all fields')
+    const nextErrors: { email?: string; password?: string } = {}
+    if (!email) nextErrors.email = 'Required'
+    if (!password) nextErrors.password = 'Required'
+    setFieldErrors(nextErrors)
+    if (Object.keys(nextErrors).length > 0) {
       return
     }
     try {
@@ -46,15 +52,23 @@ export default function LoginPage() {
           <h1>Welcome Back</h1>
           <form onSubmit={onSubmit} className="form">
             <label>E-mail</label>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="mail@gmail.com" />
+            <input
+              className={fieldErrors.email ? 'input-error' : ''}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="mail@gmail.com"
+            />
+            <div className="field-error">{fieldErrors.email ?? '\u00A0'}</div>
             <label>Password</label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter your password"
+              className={fieldErrors.password ? 'input-error' : ''}
             />
-            {error ? <div className="error">{error}</div> : null}
+            <div className="field-error">{fieldErrors.password ?? '\u00A0'}</div>
+            <div className="field-error">{error ? error : '\u00A0'}</div>
             <div className="auth-actions">
               <button className="btn-primary" type="submit" disabled={loading}>
                 {loading ? 'Signing in...' : 'Sign In'}
@@ -74,6 +88,22 @@ export default function LoginPage() {
           <div className="auth-links">
             <Link to="/forgot">Forgot password?</Link>
             <Link to="/register">Create account</Link>
+          </div>
+          <div className="store-buttons">
+            <div className="store-button">
+              <img src={appleIcon} alt="" aria-hidden="true" />
+              <div className="store-text">
+                <span className="store-label">App Store</span>
+                <span className="store-sub">Coming soon</span>
+              </div>
+            </div>
+            <div className="store-button">
+              <img src={googlePlayIcon} alt="" aria-hidden="true" />
+              <div className="store-text">
+                <span className="store-label">Google Play</span>
+                <span className="store-sub">Coming soon</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>

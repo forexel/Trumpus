@@ -3,6 +3,7 @@ import LoginPage from './pages/LoginPage'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import ChatsPage from './pages/ChatsPage'
 import ClientsPage from './pages/ClientsPage'
+import AnalyticsPage from './pages/AnalyticsPage'
 import { getToken, clearToken } from './lib/api'
 
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -22,6 +23,7 @@ export default function App() {
         <aside className="sidebar">
           <div className="brand">Trumpus Admin</div>
           <nav>
+            <Link to="/analytics">Analytics</Link>
             <Link to="/clients">Clients</Link>
             <Link to="/chats">Chats</Link>
             <button
@@ -41,6 +43,14 @@ export default function App() {
           <Route path="/" element={<Navigate to={token ? '/clients' : '/login'} replace />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/forgot" element={<ForgotPasswordPage />} />
+          <Route
+            path="/analytics"
+            element={
+              <RequireAuth>
+                <AnalyticsPage />
+              </RequireAuth>
+            }
+          />
           <Route
             path="/clients"
             element={

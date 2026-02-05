@@ -4,6 +4,7 @@ import { forgotPassword } from '../lib/api'
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<{ email?: string }>({})
   const [error, setError] = useState('')
   const [sent, setSent] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -11,8 +12,10 @@ export default function ForgotPasswordPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (!email) {
-      setError('Fill all fields')
+    const nextErrors: { email?: string } = {}
+    if (!email) nextErrors.email = 'Required'
+    setFieldErrors(nextErrors)
+    if (Object.keys(nextErrors).length > 0) {
       return
     }
     try {
@@ -35,8 +38,14 @@ export default function ForgotPasswordPage() {
           <h1>Restore password</h1>
           <form onSubmit={onSubmit} className="form">
             <label>E-mail</label>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="mail@gmail.com" />
-            {error ? <div className="error">{error}</div> : null}
+            <input
+              className={fieldErrors.email ? 'input-error' : ''}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="mail@gmail.com"
+            />
+            <div className="field-error">{fieldErrors.email ?? '\u00A0'}</div>
+            <div className="field-error">{error ? error : '\u00A0'}</div>
             {sent ? <div className="hint">Check your email for the reset link.</div> : null}
             <div className="auth-actions">
               <button className="btn-primary" type="submit" disabled={loading}>

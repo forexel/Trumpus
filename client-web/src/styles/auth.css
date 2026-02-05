@@ -57,6 +57,7 @@ html, body {
   flex-direction: column;
   align-items: center;
   gap: 16px;
+  margin-top: -24px;
 }
 
 .auth-brand {
@@ -145,6 +146,19 @@ html, body {
   box-sizing: border-box;
   margin-top: 0;
   transition: all 0.3s ease;
+}
+
+.auth-card input.input-error {
+  border-color: #bf0a30;
+  box-shadow: 0 0 0 2px rgba(191, 10, 48, 0.12);
+}
+
+.field-error {
+  min-height: 12px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #bf0a30;
+  line-height: 12px;
 }
 
 .auth-card input::placeholder {
@@ -255,6 +269,54 @@ html, body {
   align-items: center;
   padding-top: 12px;
   border-top: 2px solid #002868;
+}
+
+.store-buttons {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+}
+
+.store-button {
+  background: #0b0b0b;
+  color: #ffffff;
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #111827;
+}
+
+.store-button img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.store-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.store-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.store-sub {
+  font-size: 10px;
+  opacity: 0.75;
+  margin-top: 3px;
+}
+
+@media (max-width: 420px) {
+  .store-buttons {
+    grid-template-columns: 1fr;
+  }
 }
 
 .auth-links a,
