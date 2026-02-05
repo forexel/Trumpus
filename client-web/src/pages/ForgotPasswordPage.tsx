@@ -44,8 +44,9 @@ export default function ForgotPasswordPage() {
               onChange={(e) => setEmail(e.target.value)}
               placeholder="mail@gmail.com"
             />
-            <div className="field-error">{fieldErrors.email ?? '\u00A0'}</div>
-            <div className="field-error">{error ? error : '\u00A0'}</div>
+            <div className="field-error">
+              {fieldErrors.email || error ? fieldErrors.email || error : '\u00A0'}
+            </div>
             {sent ? <div className="hint">Check your email for the reset link.</div> : null}
             <div className="auth-actions">
               <button className="btn-primary" type="submit" disabled={loading}>

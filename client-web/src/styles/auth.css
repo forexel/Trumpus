@@ -57,7 +57,7 @@ html, body {
   flex-direction: column;
   align-items: center;
   gap: 16px;
-  margin-top: -44px;
+  margin-top: -64px;
 }
 
 .auth-brand {
@@ -118,7 +118,7 @@ html, body {
 .auth-card .form {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
 }
 
 .auth-card label {
@@ -143,7 +143,7 @@ html, body {
   border: 2px solid #002868;
   border-radius: 12px;
   font-size: 14px;
-  color: #1a1a1a;
+  color: #1a1a1a !important;
   box-sizing: border-box;
   margin-top: 0;
   transition: all 0.3s ease;
@@ -157,6 +157,7 @@ html, body {
 .field-error {
   min-height: 6px;
   margin-top: 5px;
+  margin-bottom: 2px;
   font-size: 11px;
   color: #bf0a30;
   line-height: 6px;

@@ -47,7 +47,7 @@ export default function ForgotScreen({ onBack }: { onBack: () => void }) {
 const styles = StyleSheet.create({
   form: {
     display: 'flex',
-    gap: 10,
+    gap: 0,
   },
   label: {
     fontSize: 12,
@@ -55,7 +55,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     color: '#002868',
     fontWeight: '600',
-    marginTop: 4,
+    marginTop: 8,
   },
   input: {
     borderWidth: 1,
@@ -65,6 +65,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     color: '#0f172a',
     backgroundColor: '#ffffff',
+    marginTop: 6,
   },
   inputError: {
     borderColor: '#bf0a30',
@@ -74,6 +75,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#bf0a30',
     marginTop: 5,
+    marginBottom: 2,
   },
   primaryButton: {
     marginTop: 10,

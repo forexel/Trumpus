@@ -80,8 +80,9 @@ export default function RegisterPage() {
               placeholder="Confirm your password"
               className={fieldErrors.confirm ? 'input-error' : ''}
             />
-            <div className="field-error">{fieldErrors.confirm ?? '\u00A0'}</div>
-            <div className="field-error">{error ? error : '\u00A0'}</div>
+            <div className="field-error">
+              {fieldErrors.confirm || error ? fieldErrors.confirm || error : '\u00A0'}
+            </div>
             <div className="auth-actions">
               <button className="btn-primary" type="submit" disabled={loading}>
                 {loading ? 'Creating account...' : 'Create Account'}
