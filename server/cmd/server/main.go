@@ -1,24 +1,51 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net/mail"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	_ "github.com/lib/pq"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type jsonMap map[string]any
+
+const (
+	maxBodyBytes   = 1 << 20
+	maxEmailLen    = 320
+	minPasswordLen = 6
+	maxPasswordLen = 128
+	maxMessageLen  = 2000
+	maxTitleLen    = 80
+	maxPersonaLen  = 64
+)
+
+const (
+	defaultAccessTTLMinutes  = 15
+	defaultRefreshTTLDays    = 30
+	defaultRateLimitPerMin   = 60
+	maxAuthHeaderSize        = 2048
+)
+
+type ctxKey string
+
+const ctxClientID ctxKey = "client_id"
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -26,7 +53,8 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
-func decodeJSON(r *http.Request, dst any) error {
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(dst)
@@ -133,8 +161,12 @@ func (s *Store) migrate() error {
 }
 
 func (s *Store) getOrCreateClientByEmail(email string) (*Client, error) {
+	normalized, err := normalizeEmail(email)
+	if err != nil {
+		return nil, err
+	}
 	var client Client
-	err := s.db.QueryRow(`SELECT id, name FROM clients WHERE name=$1`, email).Scan(&client.ID, &client.Name)
+	err = s.db.QueryRow(`SELECT id, name FROM clients WHERE name=$1`, normalized).Scan(&client.ID, &client.Name)
 	if err == nil {
 		return &client, nil
 	}
@@ -142,15 +174,19 @@ func (s *Store) getOrCreateClientByEmail(email string) (*Client, error) {
 		return nil, err
 	}
 	id := nextID("client")
-	_, err = s.db.Exec(`INSERT INTO clients (id, name) VALUES ($1, $2)`, id, email)
+	_, err = s.db.Exec(`INSERT INTO clients (id, name) VALUES ($1, $2)`, id, normalized)
 	if err != nil {
 		return nil, err
 	}
-	return &Client{ID: id, Name: email}, nil
+	return &Client{ID: id, Name: normalized}, nil
 }
 
 func (s *Store) registerUser(email, password string) (*Client, bool, error) {
-	_, err := s.db.Exec(`INSERT INTO users (email, password) VALUES ($1, $2)`, email, password)
+	hashed, err := hashPassword(password)
+	if err != nil {
+		return nil, false, err
+	}
+	_, err = s.db.Exec(`INSERT INTO users (email, password) VALUES ($1, $2)`, email, hashed)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate") {
 			return nil, false, nil
@@ -172,8 +208,15 @@ func (s *Store) authenticateUser(email, password string) (*Client, bool, error) 
 		}
 		return nil, false, err
 	}
-	if stored != password {
+	ok, newHash, err := verifyPassword(stored, password)
+	if err != nil {
+		return nil, false, err
+	}
+	if !ok {
 		return nil, false, nil
+	}
+	if newHash != "" {
+		_, _ = s.db.Exec(`UPDATE users SET password=$1 WHERE email=$2`, newHash, email)
 	}
 	client, err := s.getOrCreateClientByEmail(email)
 	if err != nil {
@@ -183,13 +226,23 @@ func (s *Store) authenticateUser(email, password string) (*Client, bool, error) 
 }
 
 func (s *Store) resetUserPassword(email, oldPassword, newPassword string) (*Client, bool, error) {
-	res, err := s.db.Exec(`UPDATE users SET password=$1 WHERE email=$2 AND password=$3`, newPassword, email, oldPassword)
+	var stored string
+	if err := s.db.QueryRow(`SELECT password FROM users WHERE email=$1`, email).Scan(&stored); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	ok, _, err := verifyPassword(stored, oldPassword)
+	if err != nil || !ok {
+		return nil, false, nil
+	}
+	hashed, err := hashPassword(newPassword)
 	if err != nil {
 		return nil, false, err
 	}
-	affected, _ := res.RowsAffected()
-	if affected == 0 {
-		return nil, false, nil
+	if _, err := s.db.Exec(`UPDATE users SET password=$1 WHERE email=$2`, hashed, email); err != nil {
+		return nil, false, err
 	}
 	client, err := s.getOrCreateClientByEmail(email)
 	if err != nil {
@@ -377,17 +430,268 @@ func nextID(prefix string) string {
 	return fmt.Sprintf("%s_%d_%s", prefix, time.Now().UnixNano(), suffix)
 }
 
+func normalizeEmail(raw string) (string, error) {
+	email := strings.TrimSpace(strings.ToLower(raw))
+	if email == "" || len(email) > maxEmailLen {
+		return "", errors.New("invalid email")
+	}
+	if _, err := mail.ParseAddress(email); err != nil {
+		return "", errors.New("invalid email")
+	}
+	return email, nil
+}
+
+func validatePassword(pw string) error {
+	pw = strings.TrimSpace(pw)
+	if len(pw) < minPasswordLen || len(pw) > maxPasswordLen {
+		return fmt.Errorf("password length must be %d-%d", minPasswordLen, maxPasswordLen)
+	}
+	return nil
+}
+
+func normalizeText(raw string, maxLen int) (string, error) {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return "", errors.New("empty")
+	}
+	if len(text) > maxLen {
+		return "", fmt.Errorf("too long (max %d)", maxLen)
+	}
+	return text, nil
+}
+
+func hashPassword(pw string) (string, error) {
+	hashed, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hashed), nil
+}
+
+func verifyPassword(stored, pw string) (bool, string, error) {
+	trimmed := strings.TrimSpace(stored)
+	switch {
+	case strings.HasPrefix(trimmed, "$2a$") || strings.HasPrefix(trimmed, "$2b$") || strings.HasPrefix(trimmed, "$2y$"):
+		if err := bcrypt.CompareHashAndPassword([]byte(trimmed), []byte(pw)); err != nil {
+			return false, "", nil
+		}
+		return true, "", nil
+	default:
+		if trimmed != pw {
+			return false, "", nil
+		}
+		newHash, err := hashPassword(pw)
+		if err != nil {
+			return true, "", nil
+		}
+		return true, newHash, nil
+	}
+}
+
+func jwtSecret() ([]byte, error) {
+	secret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
+	if secret == "" {
+		return nil, errors.New("JWT_SECRET is required")
+	}
+	return []byte(secret), nil
+}
+
+func accessTTL() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("JWT_ACCESS_TTL_MIN"))
+	if raw == "" {
+		return time.Duration(defaultAccessTTLMinutes) * time.Minute
+	}
+	if v, err := time.ParseDuration(raw + "m"); err == nil {
+		return v
+	}
+	return time.Duration(defaultAccessTTLMinutes) * time.Minute
+}
+
+func refreshTTL() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("JWT_REFRESH_TTL_DAYS"))
+	if raw == "" {
+		return time.Duration(defaultRefreshTTLDays) * 24 * time.Hour
+	}
+	if v, err := time.ParseDuration(raw + "h"); err == nil {
+		return v
+	}
+	return time.Duration(defaultRefreshTTLDays) * 24 * time.Hour
+}
+
+func issueTokens(clientID, email string) (string, string, time.Time, time.Time, error) {
+	secret, err := jwtSecret()
+	if err != nil {
+		return "", "", time.Time{}, time.Time{}, err
+	}
+	now := time.Now()
+	accessExp := now.Add(accessTTL())
+	refreshExp := now.Add(refreshTTL())
+
+	accessClaims := jwt.MapClaims{
+		"sub":  clientID,
+		"email": email,
+		"typ":  "access",
+		"iat":  now.Unix(),
+		"exp":  accessExp.Unix(),
+	}
+	refreshClaims := jwt.MapClaims{
+		"sub":  clientID,
+		"email": email,
+		"typ":  "refresh",
+		"iat":  now.Unix(),
+		"exp":  refreshExp.Unix(),
+	}
+	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims).SignedString(secret)
+	if err != nil {
+		return "", "", time.Time{}, time.Time{}, err
+	}
+	refreshToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims).SignedString(secret)
+	if err != nil {
+		return "", "", time.Time{}, time.Time{}, err
+	}
+	return accessToken, refreshToken, accessExp, refreshExp, nil
+}
+
+func parseToken(tokenStr, expectedType string) (jwt.MapClaims, error) {
+	secret, err := jwtSecret()
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := jwt.Parse(tokenStr, func(token *jwt.Token) (any, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return secret, nil
+	})
+	if err != nil || !parsed.Valid {
+		return nil, fmt.Errorf("invalid token")
+	}
+	claims, ok := parsed.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("invalid token")
+	}
+	if typ, ok := claims["typ"].(string); !ok || typ != expectedType {
+		return nil, fmt.Errorf("invalid token type")
+	}
+	return claims, nil
+}
+
+func getClientIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(ctxClientID).(string); ok {
+		return v
+	}
+	return ""
+}
+
 func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		allowed := isOriginAllowed(origin)
+		if allowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		} else if origin == "" {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		next(w, r)
 	}
+}
+
+type rateEntry struct {
+	Count   int
+	ResetAt time.Time
+}
+
+var (
+	rateMu     sync.Mutex
+	rateLimits = make(map[string]*rateEntry)
+)
+
+func rateLimitPerMinute() int {
+	raw := strings.TrimSpace(os.Getenv("RATE_LIMIT_PER_MIN"))
+	if raw == "" {
+		return defaultRateLimitPerMin
+	}
+	if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+		return v
+	}
+	return defaultRateLimitPerMin
+}
+
+func clientIP(r *http.Request) string {
+	if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
+		parts := strings.Split(xf, ",")
+		return strings.TrimSpace(parts[0])
+	}
+	if xr := r.Header.Get("X-Real-IP"); xr != "" {
+		return strings.TrimSpace(xr)
+	}
+	host := r.RemoteAddr
+	if idx := strings.LastIndex(host, ":"); idx != -1 {
+		return host[:idx]
+	}
+	return host
+}
+
+func withRateLimit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		key := clientIP(r)
+		limit := rateLimitPerMinute()
+		now := time.Now()
+		rateMu.Lock()
+		entry, ok := rateLimits[key]
+		if !ok || now.After(entry.ResetAt) {
+			entry = &rateEntry{Count: 0, ResetAt: now.Add(time.Minute)}
+			rateLimits[key] = entry
+		}
+		entry.Count++
+		remaining := limit - entry.Count
+		resetIn := int(entry.ResetAt.Sub(now).Seconds())
+		rateMu.Unlock()
+
+		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", limit))
+		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", max(remaining, 0)))
+		w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", resetIn))
+		if entry.Count > limit {
+			writeJSON(w, http.StatusTooManyRequests, jsonMap{"error": "rate_limited", "retry_after": resetIn})
+			return
+		}
+		next(w, r)
+	}
+}
+
+func isOriginAllowed(origin string) bool {
+	raw := strings.TrimSpace(os.Getenv("CORS_ORIGINS"))
+	if raw == "" {
+		return true
+	}
+	parts := strings.Split(raw, ",")
+	for _, p := range parts {
+		if strings.TrimSpace(p) == origin {
+			return true
+		}
+	}
+	return false
+}
+
+func wrap(handler http.HandlerFunc) http.HandlerFunc {
+	return withCORS(withRateLimit(handler))
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func requireAdminAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -401,10 +705,77 @@ func requireAdminAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func requireClientAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		raw := strings.TrimSpace(r.Header.Get("Authorization"))
+		if len(raw) > maxAuthHeaderSize {
+			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
+			return
+		}
+		token := strings.TrimSpace(strings.TrimPrefix(raw, "Bearer"))
+		if token == "" {
+			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
+			return
+		}
+		claims, err := parseToken(token, "access")
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
+			return
+		}
+		clientID, _ := claims["sub"].(string)
+		if clientID == "" {
+			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
+			return
+		}
+		ctx := context.WithValue(r.Context(), ctxClientID, clientID)
+		next(w, r.WithContext(ctx))
+	}
+}
+
 type googleConfig struct {
 	ClientID     string
 	ClientSecret string
 	CallbackURL  string
+}
+
+func handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
+		return
+	}
+	if strings.TrimSpace(req.RefreshToken) == "" {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "refresh token required"})
+		return
+	}
+	claims, err := parseToken(req.RefreshToken, "refresh")
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "invalid refresh token"})
+		return
+	}
+	clientID, _ := claims["sub"].(string)
+	email, _ := claims["email"].(string)
+	if clientID == "" || email == "" {
+		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "invalid refresh token"})
+		return
+	}
+	access, refresh, accessExp, refreshExp, err := issueTokens(clientID, email)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, jsonMap{
+		"access_token":  access,
+		"refresh_token": refresh,
+		"access_expires": accessExp.Format(time.RFC3339),
+		"refresh_expires": refreshExp.Format(time.RFC3339),
+	})
 }
 
 func main() {
@@ -435,21 +806,22 @@ func main() {
 	}))
 
 	// Auth stubs
-	mux.HandleFunc("/api/v1/auth/login", withCORS(handleClientLogin))
-	mux.HandleFunc("/api/v1/auth/register", withCORS(handleClientRegister))
-	mux.HandleFunc("/api/v1/auth/forgot-password", withCORS(handleClientForgot))
-	mux.HandleFunc("/api/v1/auth/reset-password", withCORS(handleClientReset))
+	mux.HandleFunc("/api/v1/auth/login", wrap(handleClientLogin))
+	mux.HandleFunc("/api/v1/auth/register", wrap(handleClientRegister))
+	mux.HandleFunc("/api/v1/auth/forgot-password", wrap(handleClientForgot))
+	mux.HandleFunc("/api/v1/auth/reset-password", wrap(handleClientReset))
 	mux.HandleFunc("/api/v1/auth/google/start", handleGoogleStart(googleCfg))
 	mux.HandleFunc("/api/v1/auth/google/callback", handleGoogleCallback(googleCfg))
-	mux.HandleFunc("/api/v1/auth/google/mobile", withCORS(handleGoogleMobile(googleCfg)))
+	mux.HandleFunc("/api/v1/auth/google/mobile", wrap(handleGoogleMobile(googleCfg)))
+	mux.HandleFunc("/api/v1/auth/refresh", wrap(handleAuthRefresh))
 
-	mux.HandleFunc("/api/v1/admin/login", withCORS(handleAdminLogin))
-	mux.HandleFunc("/api/v1/admin/clients", withCORS(requireAdminAuth(handleAdminClients)))
-	mux.HandleFunc("/api/v1/admin/chats", withCORS(requireAdminAuth(handleAdminChats)))
-	mux.HandleFunc("/api/v1/admin/chats/", withCORS(requireAdminAuth(handleAdminChatRoutes)))
+	mux.HandleFunc("/api/v1/admin/login", wrap(handleAdminLogin))
+	mux.HandleFunc("/api/v1/admin/clients", wrap(requireAdminAuth(handleAdminClients)))
+	mux.HandleFunc("/api/v1/admin/chats", wrap(requireAdminAuth(handleAdminChats)))
+	mux.HandleFunc("/api/v1/admin/chats/", wrap(requireAdminAuth(handleAdminChatRoutes)))
 
-	mux.HandleFunc("/api/v1/clients/", withCORS(handleClientRoutes))
-	mux.HandleFunc("/api/v1/chats/", withCORS(handleChatRoutes))
+	mux.HandleFunc("/api/v1/clients/", wrap(requireClientAuth(handleClientRoutes)))
+	mux.HandleFunc("/api/v1/chats/", wrap(requireClientAuth(handleChatRoutes)))
 
 	srv := &http.Server{
 		Addr:    ":" + port,
@@ -585,14 +957,23 @@ func handleGoogleCallback(cfg googleConfig) http.HandlerFunc {
 			return
 		}
 
-		// For now issue a stub token for the client app.
+		access, refresh, accessExp, refreshExp, err := issueTokens(client.ID, userInfo.Email)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+			return
+		}
+
+		// For web redirect, return tokens in query params (MVP).
 		redirectURL, err := url.Parse(stateEntry.RedirectURL)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid redirect"})
 			return
 		}
 		q := redirectURL.Query()
-		q.Set("token", "client-token")
+		q.Set("access_token", access)
+		q.Set("refresh_token", refresh)
+		q.Set("access_expires", accessExp.Format(time.RFC3339))
+		q.Set("refresh_expires", refreshExp.Format(time.RFC3339))
 		q.Set("email", userInfo.Email)
 		q.Set("client_id", client.ID)
 		redirectURL.RawQuery = q.Encode()
@@ -705,11 +1086,19 @@ func handleGoogleMobile(cfg googleConfig) http.HandlerFunc {
 			writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 			return
 		}
+		access, refresh, accessExp, refreshExp, err := issueTokens(client.ID, email)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+			return
+		}
 
 		writeJSON(w, http.StatusOK, jsonMap{
-			"token":     "client-token",
-			"email":     email,
-			"client_id": client.ID,
+			"access_token":  access,
+			"refresh_token": refresh,
+			"access_expires": accessExp.Format(time.RFC3339),
+			"refresh_expires": refreshExp.Format(time.RFC3339),
+			"email":         email,
+			"client_id":     client.ID,
 		})
 	}
 }
@@ -745,7 +1134,7 @@ func handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
 		return
 	}
@@ -767,15 +1156,20 @@ func handleClientLogin(w http.ResponseWriter, r *http.Request) {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
 		return
 	}
-	if req.Email == "" || req.Password == "" {
-		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "email and password required"})
+	email, err := normalizeEmail(req.Email)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid email"})
 		return
 	}
-	client, ok, err := store.authenticateUser(req.Email, req.Password)
+	if err := validatePassword(req.Password); err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": err.Error()})
+		return
+	}
+	client, ok, err := store.authenticateUser(email, req.Password)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
@@ -784,10 +1178,18 @@ func handleClientLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "invalid credentials"})
 		return
 	}
+	access, refresh, accessExp, refreshExp, err := issueTokens(client.ID, email)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
 	writeJSON(w, http.StatusOK, jsonMap{
-		"token":     "client-token",
-		"email":     req.Email,
-		"client_id": client.ID,
+		"access_token":  access,
+		"refresh_token": refresh,
+		"access_expires": accessExp.Format(time.RFC3339),
+		"refresh_expires": refreshExp.Format(time.RFC3339),
+		"email":         email,
+		"client_id":     client.ID,
 	})
 }
 
@@ -800,15 +1202,20 @@ func handleClientRegister(w http.ResponseWriter, r *http.Request) {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
 		return
 	}
-	if req.Email == "" || req.Password == "" {
-		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "email and password required"})
+	email, err := normalizeEmail(req.Email)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid email"})
 		return
 	}
-	client, ok, err := store.registerUser(req.Email, req.Password)
+	if err := validatePassword(req.Password); err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": err.Error()})
+		return
+	}
+	client, ok, err := store.registerUser(email, req.Password)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
@@ -817,10 +1224,18 @@ func handleClientRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, jsonMap{"error": "user already exists"})
 		return
 	}
+	access, refresh, accessExp, refreshExp, err := issueTokens(client.ID, email)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
 	writeJSON(w, http.StatusOK, jsonMap{
-		"token":     "client-token",
-		"email":     req.Email,
-		"client_id": client.ID,
+		"access_token":  access,
+		"refresh_token": refresh,
+		"access_expires": accessExp.Format(time.RFC3339),
+		"refresh_expires": refreshExp.Format(time.RFC3339),
+		"email":         email,
+		"client_id":     client.ID,
 	})
 }
 
@@ -832,12 +1247,12 @@ func handleClientForgot(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email string `json:"email"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
 		return
 	}
-	if req.Email == "" {
-		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "email required"})
+	if _, err := normalizeEmail(req.Email); err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid email"})
 		return
 	}
 	writeJSON(w, http.StatusOK, jsonMap{"sent": true})
@@ -853,15 +1268,24 @@ func handleClientReset(w http.ResponseWriter, r *http.Request) {
 		OldPassword string `json:"old_password"`
 		NewPassword string `json:"new_password"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
 		return
 	}
-	if req.Email == "" || req.OldPassword == "" || req.NewPassword == "" {
-		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "email and passwords required"})
+	email, err := normalizeEmail(req.Email)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid email"})
 		return
 	}
-	client, ok, err := store.resetUserPassword(req.Email, req.OldPassword, req.NewPassword)
+	if err := validatePassword(req.OldPassword); err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": err.Error()})
+		return
+	}
+	if err := validatePassword(req.NewPassword); err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": err.Error()})
+		return
+	}
+	client, ok, err := store.resetUserPassword(email, req.OldPassword, req.NewPassword)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
@@ -870,10 +1294,18 @@ func handleClientReset(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "invalid credentials"})
 		return
 	}
+	access, refresh, accessExp, refreshExp, err := issueTokens(client.ID, email)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
 	writeJSON(w, http.StatusOK, jsonMap{
-		"token":     "client-token",
-		"email":     req.Email,
-		"client_id": client.ID,
+		"access_token":  access,
+		"refresh_token": refresh,
+		"access_expires": accessExp.Format(time.RFC3339),
+		"refresh_expires": refreshExp.Format(time.RFC3339),
+		"email":         email,
+		"client_id":     client.ID,
 	})
 }
 
@@ -1031,7 +1463,12 @@ func handleAdminSendMessage(w http.ResponseWriter, r *http.Request, chatID strin
 	var req struct {
 		Content string `json:"content"`
 	}
-	if err := decodeJSON(r, &req); err != nil || strings.TrimSpace(req.Content) == "" {
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "content required"})
+		return
+	}
+	content, err := normalizeText(req.Content, maxMessageLen)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "content required"})
 		return
 	}
@@ -1045,7 +1482,7 @@ func handleAdminSendMessage(w http.ResponseWriter, r *http.Request, chatID strin
 		writeJSON(w, http.StatusNotFound, jsonMap{"error": "chat not found"})
 		return
 	}
-	msg, err := store.insertMessage(chatID, "admin", req.Content, time.Now())
+	msg, err := store.insertMessage(chatID, "admin", content, time.Now())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
@@ -1077,6 +1514,10 @@ func handleClientRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clientID := parts[0]
+	if authedID := getClientIDFromContext(r.Context()); authedID != "" && authedID != clientID {
+		writeJSON(w, http.StatusForbidden, jsonMap{"error": "forbidden"})
+		return
+	}
 	if parts[1] == "chats" {
 		if r.Method == http.MethodGet {
 			handleClientChatsList(w, r, clientID)
@@ -1113,7 +1554,7 @@ func handleClientChatCreate(w http.ResponseWriter, r *http.Request, clientID str
 		Title   string `json:"title"`
 		Persona string `json:"persona"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
 		return
 	}
@@ -1128,12 +1569,19 @@ func handleClientChatCreate(w http.ResponseWriter, r *http.Request, clientID str
 		return
 	}
 
-	if strings.TrimSpace(req.Persona) == "" {
+	persona, err := normalizeText(req.Persona, maxPersonaLen)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "persona required"})
 		return
 	}
 
-	chat, err := store.createChat(clientID, req.Title, req.Persona)
+	title := strings.TrimSpace(req.Title)
+	if len(title) > maxTitleLen {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "title too long"})
+		return
+	}
+
+	chat, err := store.createChat(clientID, title, persona)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
@@ -1149,6 +1597,20 @@ func handleChatRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	chatID := parts[0]
+	authedID := getClientIDFromContext(r.Context())
+	if authedID == "" {
+		writeJSON(w, http.StatusForbidden, jsonMap{"error": "forbidden"})
+		return
+	}
+	chat, err := store.getChatByID(chatID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if chat == nil || chat.ClientID != authedID {
+		writeJSON(w, http.StatusForbidden, jsonMap{"error": "forbidden"})
+		return
+	}
 	if parts[1] == "messages" {
 		if r.Method == http.MethodGet {
 			handleChatMessagesList(w, r, chatID)
@@ -1190,7 +1652,12 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 		Content string `json:"content"`
 		Persona string `json:"persona"`
 	}
-	if err := decodeJSON(r, &req); err != nil || strings.TrimSpace(req.Content) == "" {
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "content required"})
+		return
+	}
+	content, err := normalizeText(req.Content, maxMessageLen)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "content required"})
 		return
 	}
@@ -1206,7 +1673,7 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 	}
 
 	now := time.Now()
-	if dup, err := store.findRecentClientDuplicate(chatID, req.Content, now, 5*time.Second); err != nil {
+	if dup, err := store.findRecentClientDuplicate(chatID, content, now, 5*time.Second); err != nil {
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
 	} else if dup != nil {
@@ -1215,7 +1682,7 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 		return
 	}
 
-	msg, err := store.insertMessage(chatID, "client", req.Content, now)
+	msg, err := store.insertMessage(chatID, "client", content, now)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
@@ -1223,7 +1690,7 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 	_ = store.updateChatUnread(chatID, chat.UnreadForAdmin+1)
 	_ = store.updateChatLastMessage(chatID, msg.CreatedAt)
 	if strings.TrimSpace(chat.Title) == "" {
-		_ = store.updateChatTitle(chatID, firstLine(req.Content, 60))
+		_ = store.updateChatTitle(chatID, firstLine(content, 60))
 	}
 
 	writeJSON(w, http.StatusCreated, msg)
@@ -1231,7 +1698,9 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 
 	persona := chat.Persona
 	if strings.TrimSpace(req.Persona) != "" {
-		persona = req.Persona
+		if p, err := normalizeText(req.Persona, maxPersonaLen); err == nil {
+			persona = p
+		}
 	}
 	llmBase := os.Getenv("LLM_BASE")
 	go func(chatID, persona, content, requestID string) {
@@ -1256,7 +1725,7 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 			return
 		}
 		_ = store.updateChatLastMessage(chatID, reply.CreatedAt)
-	}(chatID, persona, req.Content, reqID)
+	}(chatID, persona, content, reqID)
 }
 
 func firstLine(text string, max int) string {

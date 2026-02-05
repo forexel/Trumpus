@@ -7,11 +7,17 @@ export default function GoogleCallbackPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
-    const token = params.get('token')
+    const accessToken = params.get('access_token')
+    const refreshToken = params.get('refresh_token')
+    const accessExpires = params.get('access_expires')
     const email = params.get('email')
     const clientId = params.get('client_id')
-    if (token) {
-      localStorage.setItem('client_token', token)
+    if (accessToken && refreshToken) {
+      localStorage.setItem('access_token', accessToken)
+      localStorage.setItem('refresh_token', refreshToken)
+      if (accessExpires) {
+        localStorage.setItem('access_expires', accessExpires)
+      }
     }
     if (email) {
       localStorage.setItem('client_email', email)

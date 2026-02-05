@@ -133,6 +133,9 @@ export default function ChatsPage() {
 
   const handleLogout = () => {
     localStorage.removeItem('client_token')
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('refresh_token')
+    localStorage.removeItem('access_expires')
     localStorage.removeItem('client_email')
     localStorage.removeItem('client_id')
     navigate('/login')

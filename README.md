@@ -30,6 +30,15 @@ Client app + admin panel + chat server + LLM worker.
 
 Note: email sending for password reset is not connected yet.
 
+## Security (MVP)
+
+- Passwords are hashed with bcrypt; legacy plaintext entries are upgraded on next login.
+- Server validates email format, password length, and message/title/persona length.
+- Client web Markdown rendering blocks unsafe URLs (no `javascript:` links).
+- SQL uses parameterized queries (no string concatenation).
+
+If you need stricter controls (rate limiting, JWT auth, stricter CORS), add them before public launch.
+
 ## Local Dev (Docker)
 
 ```bash
@@ -191,6 +200,11 @@ API:
 - `GOOGLE_CLIENT_SECRET=...`
 - `GOOGLE_OAUTH_CALLBACK_URL=https://YOUR_DOMAIN/api/v1/auth/google/callback`
 - `LLM_BASE=http://llm:8010`
+- `JWT_SECRET=...` (required)
+- `JWT_ACCESS_TTL_MIN=15` (optional)
+- `JWT_REFRESH_TTL_DAYS=30` (optional)
+- `RATE_LIMIT_PER_MIN=60` (optional)
+- `CORS_ORIGINS=https://app.privetsuper.ru:18000,http://localhost:5173` (optional)
 
 Client web:
 - `VITE_API_BASE=https://YOUR_DOMAIN/api/v1`

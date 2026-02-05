@@ -1,10 +1,12 @@
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useState } from 'react';
 import AuthLayout from './AuthLayout';
+import { API_BASE_URL } from '../config';
 
 export default function ForgotScreen({ onBack }: { onBack: () => void }) {
   const [email, setEmail] = useState('');
   const [emailError, setEmailError] = useState('');
+  const isValidEmail = (value: string) => /\S+@\S+\.\S+/.test(value.trim());
   return (
     <AuthLayout title="Restore Password">
       <View style={styles.form}>
@@ -20,9 +22,15 @@ export default function ForgotScreen({ onBack }: { onBack: () => void }) {
 
         <Pressable
           style={styles.primaryButton}
-          onPress={() => {
-            const nextEmailError = email ? '' : 'Required';
+          onPress={async () => {
+            const nextEmailError = email ? (isValidEmail(email) ? '' : 'Invalid email') : 'Required';
             setEmailError(nextEmailError);
+            if (nextEmailError) return;
+            await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email }),
+            });
           }}
         >
           <Text style={styles.primaryButtonText}>Send e-mail</Text>

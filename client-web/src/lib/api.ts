@@ -374,6 +374,9 @@ function saveMessages(messages: Record<string, Message[]>): void {
 let storedChats = loadChats()
 let storedMessages = loadMessages()
 const LAST_CHAT_KEY = 'last_chat_id'
+const ACCESS_TOKEN_KEY = 'access_token'
+const REFRESH_TOKEN_KEY = 'refresh_token'
+const ACCESS_EXPIRES_KEY = 'access_expires'
 
 export type ChatSummary = {
   id: string
@@ -394,6 +397,62 @@ export function getClientId() {
   return localStorage.getItem('client_id') ?? ''
 }
 
+export function getAccessToken() {
+  return localStorage.getItem(ACCESS_TOKEN_KEY) ?? ''
+}
+
+export function getRefreshToken() {
+  return localStorage.getItem(REFRESH_TOKEN_KEY) ?? ''
+}
+
+function setAuthTokens(tokens: { access_token: string; refresh_token: string; access_expires?: string }) {
+  localStorage.setItem(ACCESS_TOKEN_KEY, tokens.access_token)
+  localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refresh_token)
+  if (tokens.access_expires) {
+    localStorage.setItem(ACCESS_EXPIRES_KEY, tokens.access_expires)
+  }
+}
+
+async function refreshAccessToken() {
+  const refresh = getRefreshToken()
+  if (!refresh) {
+    return false
+  }
+  const res = await fetch(`${API_BASE}/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token: refresh }),
+  })
+  if (!res.ok) return false
+  const data = await res.json()
+  if (data.access_token && data.refresh_token) {
+    setAuthTokens(data)
+    return true
+  }
+  return false
+}
+
+async function fetchWithAuth(input: string, init: RequestInit = {}) {
+  const headers = new Headers(init.headers ?? {})
+  const token = getAccessToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  if (!headers.has('Content-Type') && init.body) {
+    headers.set('Content-Type', 'application/json')
+  }
+  const res = await fetch(input, { ...init, headers })
+  if (res.status !== 401) return res
+
+  const refreshed = await refreshAccessToken()
+  if (!refreshed) return res
+  const retryHeaders = new Headers(init.headers ?? {})
+  const newToken = getAccessToken()
+  if (newToken) retryHeaders.set('Authorization', `Bearer ${newToken}`)
+  if (!retryHeaders.has('Content-Type') && init.body) {
+    retryHeaders.set('Content-Type', 'application/json')
+  }
+  return fetch(input, { ...init, headers: retryHeaders })
+}
+
 export function getLastChatId() {
   const saved = localStorage.getItem(LAST_CHAT_KEY)
   return saved ?? ''
@@ -407,7 +466,7 @@ export async function fetchChats(clientId: string) {
   if (MOCK_MODE) {
     return { items: storedChats }
   }
-  const res = await fetch(`${API_BASE}/clients/${clientId}/chats`)
+  const res = await fetchWithAuth(`${API_BASE}/clients/${clientId}/chats`)
   if (!res.ok) throw new Error('Failed to load chats')
   return (await res.json()) as { items: ChatSummary[] }
 }
@@ -422,9 +481,8 @@ export async function createChat(clientId: string, persona: string) {
     setLastChatId(newChat.id)
     return newChat
   }
-  const res = await fetch(`${API_BASE}/clients/${clientId}/chats`, {
+  const res = await fetchWithAuth(`${API_BASE}/clients/${clientId}/chats`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ persona }),
   })
   if (!res.ok) throw new Error('Failed to create chat')
@@ -437,7 +495,7 @@ export async function fetchMessages(chatId: string) {
   if (MOCK_MODE) {
     return { items: storedMessages[chatId] || [] }
   }
-  const res = await fetch(`${API_BASE}/chats/${chatId}/messages`)
+  const res = await fetchWithAuth(`${API_BASE}/chats/${chatId}/messages`)
   if (!res.ok) throw new Error('Failed to load messages')
   return (await res.json()) as { items: Message[] }
 }
@@ -473,9 +531,8 @@ export async function sendMessage(chatId: string, content: string, persona?: str
     saveMessages(storedMessages)
     return msg
   }
-  const res = await fetch(`${API_BASE}/chats/${chatId}/messages`, {
+  const res = await fetchWithAuth(`${API_BASE}/chats/${chatId}/messages`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content, persona }),
   })
   if (!res.ok) throw new Error('Failed to send message')
@@ -516,7 +573,11 @@ export async function login(email: string, password: string) {
     body: JSON.stringify({ email, password }),
   })
   if (!res.ok) throw new Error('Invalid email or password')
-  return (await res.json()) as { token: string; email: string; client_id: string }
+  const data = (await res.json()) as { access_token: string; refresh_token: string; email: string; client_id: string; access_expires?: string }
+  if (data.access_token && data.refresh_token) {
+    setAuthTokens(data)
+  }
+  return data
 }
 
 export async function register(email: string, password: string) {
@@ -529,7 +590,11 @@ export async function register(email: string, password: string) {
     body: JSON.stringify({ email, password }),
   })
   if (!res.ok) throw new Error('Registration failed')
-  return (await res.json()) as { token: string; email: string; client_id: string }
+  const data = (await res.json()) as { access_token: string; refresh_token: string; email: string; client_id: string; access_expires?: string }
+  if (data.access_token && data.refresh_token) {
+    setAuthTokens(data)
+  }
+  return data
 }
 
 export async function forgotPassword(email: string) {
@@ -555,5 +620,9 @@ export async function resetPassword(email: string, oldPassword: string, newPassw
     body: JSON.stringify({ email, old_password: oldPassword, new_password: newPassword }),
   })
   if (!res.ok) throw new Error('Failed to reset password')
-  return (await res.json()) as { token: string; email: string; client_id: string }
+  const data = (await res.json()) as { access_token: string; refresh_token: string; email: string; client_id: string; access_expires?: string }
+  if (data.access_token && data.refresh_token) {
+    setAuthTokens(data)
+  }
+  return data
 }

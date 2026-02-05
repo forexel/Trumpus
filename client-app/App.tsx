@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SafeAreaView, StyleSheet, Text, View } from 'react-native';
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
@@ -7,6 +7,7 @@ import ForgotScreen from './src/screens/ForgotScreen';
 import ChatsScreen from './src/screens/ChatsScreen';
 import ChatDetailScreen from './src/screens/ChatDetailScreen';
 import ErrorScreen from './src/screens/ErrorScreen';
+import { getAccessToken, refreshTokens } from './src/lib/auth';
 
 export default function App() {
   const [screen, setScreen] = useState<'login' | 'register' | 'forgot' | 'chats' | 'chat'>('login');
@@ -16,38 +17,60 @@ export default function App() {
     message: string;
     retry: () => void;
   } | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+
+  useEffect(() => {
+    async function bootstrap() {
+      const token = await getAccessToken();
+      if (token) {
+        setScreen('chats');
+        setAuthReady(true);
+        return;
+      }
+      const refreshed = await refreshTokens();
+      if (refreshed) {
+        setScreen('chats');
+      }
+      setAuthReady(true);
+    }
+    bootstrap();
+  }, []);
 
   return (
     <SafeAreaView style={styles.screen}>
-      {errorState ? (
-        <ErrorScreen
-          title={errorState.title}
-          message={errorState.message}
-          onBack={() => {
-            setErrorState(null);
-            setScreen('login');
-          }}
-          onRetry={() => {
-            const retry = errorState.retry;
-            setErrorState(null);
-            retry();
-          }}
-        />
-      ) : null}
+      {!authReady ? null : (
+        <>
+          {errorState ? (
+            <ErrorScreen
+              title={errorState.title}
+              message={errorState.message}
+              onBack={() => {
+                setErrorState(null);
+                setScreen('login');
+              }}
+              onRetry={() => {
+                const retry = errorState.retry;
+                setErrorState(null);
+                retry();
+              }}
+            />
+          ) : null}
 
-      {!errorState && screen === 'login' ? (
-        <LoginScreen
-          onGoogleStatus={setStatus}
-          onForgot={() => setScreen('forgot')}
-          onRegister={() => setScreen('register')}
-          onLogin={() => setScreen('chats')}
-          onError={(title, message, retry) => setErrorState({ title, message, retry })}
-        />
-      ) : null}
-      {!errorState && screen === 'register' ? <RegisterScreen onBack={() => setScreen('login')} /> : null}
-      {!errorState && screen === 'forgot' ? <ForgotScreen onBack={() => setScreen('login')} /> : null}
-      {!errorState && screen === 'chats' ? <ChatsScreen onOpenChat={() => setScreen('chat')} /> : null}
-      {!errorState && screen === 'chat' ? <ChatDetailScreen onBack={() => setScreen('chats')} /> : null}
+          {!errorState && screen === 'login' ? (
+            <LoginScreen
+              onGoogleStatus={setStatus}
+              onForgot={() => setScreen('forgot')}
+              onRegister={() => setScreen('register')}
+              onLogin={() => setScreen('chats')}
+              onError={(title, message, retry) => setErrorState({ title, message, retry })}
+            />
+          ) : null}
+          {!errorState && screen === 'register' ? <RegisterScreen onBack={() => setScreen('login')} /> : null}
+          {!errorState && screen === 'forgot' ? <ForgotScreen onBack={() => setScreen('login')} /> : null}
+          {!errorState && screen === 'chats' ? <ChatsScreen onOpenChat={() => setScreen('chat')} /> : null}
+          {!errorState && screen === 'chat' ? <ChatDetailScreen onBack={() => setScreen('chats')} /> : null}
+        </>
+      )}
 
       {status ? (
         <View style={styles.statusWrap}>
