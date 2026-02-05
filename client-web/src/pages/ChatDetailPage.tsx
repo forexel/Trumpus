@@ -289,19 +289,16 @@ export default function ChatDetailPage() {
           onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && onSend()}
           disabled={typing || sending}
         />
-        <button 
-          className="send-btn eagle-btn" 
-          onClick={onSend} 
-          disabled={!text.trim() || typing || sending}
-          aria-label="Send"
+        <button
+          className={`send-btn eagle-btn ${typing ? 'stop' : ''}`}
+          onClick={typing ? stopWaiting : onSend}
+          disabled={typing ? false : !text.trim() || sending}
+          aria-label={typing ? 'Stop' : 'Send'}
         >
-          <img src={eagleIcon} alt="Send" className={`eagle-send-icon ${typing ? 'flying' : ''}`} />
+          {typing ? <span className="stop-icon" aria-hidden="true" /> : (
+            <img src={eagleIcon} alt="Send" className="eagle-send-icon" />
+          )}
         </button>
-        {typing ? (
-          <button className="retry-btn" type="button" onClick={stopWaiting}>
-            Stop
-          </button>
-        ) : null}
       </div>
     </div>
   )
