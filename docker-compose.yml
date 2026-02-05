@@ -64,6 +64,9 @@ services:
       API_BASE: http://api:8000/api/v1
       ADMIN_TOKEN: admin-token
       PORT: 8010
+      LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-oss-120b:free}
       OPENROUTER_MODEL_PRIMARY: ${OPENROUTER_MODEL_PRIMARY:-}
