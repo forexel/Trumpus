@@ -1,6 +1,8 @@
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useState } from 'react';
 import AuthLayout from './AuthLayout';
+import { API_BASE_URL } from '../config';
+import { saveTokens } from '../lib/auth';
 
 export default function RegisterScreen({ onBack }: { onBack: () => void }) {
   const [email, setEmail] = useState('');
@@ -9,6 +11,7 @@ export default function RegisterScreen({ onBack }: { onBack: () => void }) {
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [confirmError, setConfirmError] = useState('');
+  const isValidEmail = (value: string) => /\S+@\S+\.\S+/.test(value.trim());
   return (
     <AuthLayout title="Create Account">
       <View style={styles.form}>
@@ -46,14 +49,31 @@ export default function RegisterScreen({ onBack }: { onBack: () => void }) {
 
         <Pressable
           style={styles.primaryButton}
-          onPress={() => {
-            const nextEmailError = email ? '' : 'Required';
+          onPress={async () => {
+            const nextEmailError = email ? (isValidEmail(email) ? '' : 'Invalid email') : 'Required';
             const nextPasswordError = password ? '' : 'Required';
             const nextConfirmError = confirm ? '' : 'Required';
             const mismatch = password && confirm && password !== confirm ? 'Passwords do not match' : '';
             setEmailError(nextEmailError);
             setPasswordError(nextPasswordError || mismatch);
             setConfirmError(nextConfirmError || mismatch);
+            if (nextEmailError || nextPasswordError || nextConfirmError || mismatch) return;
+
+            try {
+              const res = await fetch(`${API_BASE_URL}/auth/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password }),
+              });
+              const data = await res.json();
+              if (!res.ok) {
+                throw new Error(data?.error ?? `HTTP ${res.status}`);
+              }
+              await saveTokens(data);
+              onBack();
+            } catch (err) {
+              setPasswordError(err instanceof Error ? err.message : 'Registration failed');
+            }
           }}
         >
           <Text style={styles.primaryButtonText}>Sign Up</Text>

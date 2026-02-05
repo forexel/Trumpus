@@ -6,6 +6,7 @@ import AuthLayout from './AuthLayout';
 import { API_BASE_URL, GOOGLE_ANDROID_CLIENT_ID, GOOGLE_WEB_CLIENT_ID } from '../config';
 import GoogleIcon from '../../assets/google.svg';
 import { useEffect, useState } from 'react';
+import { saveTokens } from '../lib/auth';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -48,6 +49,7 @@ export default function LoginScreen({
           if (!res.ok) {
             throw new Error(data?.error ?? `HTTP ${res.status}`);
           }
+          await saveTokens(data);
           onGoogleStatus(`Logged in: ${data?.email ?? 'ok'}`);
           onLogin();
         };
@@ -73,6 +75,8 @@ export default function LoginScreen({
     }
     handleGoogle();
   }, [response, onGoogleStatus]);
+
+  const isValidEmail = (value: string) => /\S+@\S+\.\S+/.test(value.trim());
 
   return (
     <AuthLayout title="Welcome Back">
@@ -100,13 +104,32 @@ export default function LoginScreen({
 
         <Pressable
           style={styles.primaryButton}
-          onPress={() => {
-            const nextEmailError = email ? '' : 'Required';
+          onPress={async () => {
+            const nextEmailError = email ? (isValidEmail(email) ? '' : 'Invalid email') : 'Required';
             const nextPasswordError = password ? '' : 'Required';
             setEmailError(nextEmailError);
             setPasswordError(nextPasswordError);
-            if (!nextEmailError && !nextPasswordError) {
+            if (nextEmailError || nextPasswordError) return;
+
+            const retry = async () => {
+              const res = await fetch(`${API_BASE_URL}/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password }),
+              });
+              const data = await res.json();
+              if (!res.ok) {
+                throw new Error(data?.error ?? `HTTP ${res.status}`);
+              }
+              await saveTokens(data);
               onLogin();
+            };
+
+            try {
+              await retry();
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : 'unknown';
+              onError('Authentication error', msg, retry);
             }
           }}
         >

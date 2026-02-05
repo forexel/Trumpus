@@ -30,6 +30,18 @@ function formatTime(dateStr: string): string {
   return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
+function safeUri(uri: string): string {
+  try {
+    const parsed = new URL(uri, window.location.origin)
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:' || parsed.protocol === 'mailto:') {
+      return parsed.toString()
+    }
+  } catch {
+    // fallthrough
+  }
+  return ''
+}
+
 export default function ChatDetailPage() {
   const { id } = useParams()
   const chatId = id ?? ''
@@ -202,6 +214,11 @@ export default function ChatDetailPage() {
       ol: ({ children }: { children?: React.ReactNode }) => <ol className="bubble-list">{children}</ol>,
       li: ({ children }: { children?: React.ReactNode }) => <li>{children}</li>,
       strong: ({ children }: { children?: React.ReactNode }) => <strong className="bubble-strong">{children}</strong>,
+      a: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
+        <a href={safeUri(href ?? '')} target="_blank" rel="noopener noreferrer">
+          {children}
+        </a>
+      ),
     }),
     []
   )
@@ -258,7 +275,12 @@ export default function ChatDetailPage() {
                   </>
                 ) : (
                   <>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={markdownComponents}
+                      transformLinkUri={safeUri}
+                      transformImageUri={safeUri}
+                    >
                       {m.content}
                     </ReactMarkdown>
                     <div className="bubble-time">{formatTime(m.created_at)}</div>
