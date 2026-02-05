@@ -4,7 +4,7 @@ import AuthLayout from './AuthLayout';
 import { API_BASE_URL } from '../config';
 import { saveTokens } from '../lib/auth';
 
-export default function RegisterScreen({ onBack }: { onBack: () => void }) {
+export default function RegisterScreen({ onBack, onRegister }: { onBack: () => void; onRegister: () => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -70,7 +70,7 @@ export default function RegisterScreen({ onBack }: { onBack: () => void }) {
                 throw new Error(data?.error ?? `HTTP ${res.status}`);
               }
               await saveTokens(data);
-              onBack();
+              onRegister();
             } catch (err) {
               setPasswordError(err instanceof Error ? err.message : 'Registration failed');
             }
