@@ -137,7 +137,7 @@ html, body {
 .auth-card input {
   width: 100%;
   padding: 11px 14px;
-  background: var(--auth-input-bg);
+  background: #ffffff;
   border: 2px solid #002868;
   border-radius: 12px;
   font-size: 14px;
@@ -154,7 +154,7 @@ html, body {
 .auth-card input:focus {
   outline: none;
   border-color: #BF0A30;
-  background: var(--auth-input-bg);
+  background: #ffffff;
   box-shadow: 0 0 0 4px rgba(191, 10, 48, 0.2);
   color: #1a1a1a;
 }
@@ -236,23 +236,6 @@ html, body {
 [data-theme="dark"] .auth-card h1,
 [data-theme="dark"] .auth-card label {
   color: #e5e7eb;
-}
-
-[data-theme="dark"] .auth-card input {
-  background: var(--auth-input-bg);
-  border-color: #2a2a2a;
-  color: #f3f4f6;
-}
-
-[data-theme="dark"] .auth-card input::placeholder {
-  color: #6b7280;
-}
-
-[data-theme="dark"] .auth-card input:focus {
-  background: var(--auth-input-bg);
-  border-color: #BF0A30;
-  box-shadow: 0 0 0 4px rgba(191, 10, 48, 0.25);
-  color: #f3f4f6;
 }
 
 .btn-google:hover {

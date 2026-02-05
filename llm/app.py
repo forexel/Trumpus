@@ -8,7 +8,10 @@ from pydantic import BaseModel
 
 API_BASE = os.getenv("API_BASE", "http://api:8000/api/v1").rstrip("/")
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "admin-token")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openrouter").strip().lower()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
 OPENROUTER_MODEL_PRIMARY = os.getenv("OPENROUTER_MODEL_PRIMARY", os.getenv("OPENROUTER_MODEL", "")).strip()
 OPENROUTER_MODEL_FALLBACK = os.getenv("OPENROUTER_MODEL_FALLBACK", "").strip()
 OPENROUTER_MODEL_FALLBACK_2 = os.getenv("OPENROUTER_MODEL_FALLBACK_2", "").strip()
@@ -125,11 +128,14 @@ async def respond(req: RespondRequest, response: Response):
     if not req.chat_id or not req.content:
         raise HTTPException(status_code=400, detail="chat_id and content are required")
 
-    if not OPENROUTER_API_KEY:
+    if LLM_PROVIDER == "openai" and not OPENAI_API_KEY:
+        response.status_code = 503
+        return {"error": "llm_not_configured", "detail": "OPENAI_API_KEY is not set"}
+    if LLM_PROVIDER == "openrouter" and not OPENROUTER_API_KEY:
         response.status_code = 503
         return {"error": "llm_not_configured", "detail": "OPENROUTER_API_KEY is not set"}
 
-    model_candidates = [
+    openrouter_models = [
         m
         for m in [
             OPENROUTER_MODEL_PRIMARY,
@@ -139,9 +145,21 @@ async def respond(req: RespondRequest, response: Response):
         ]
         if m
     ]
+
+    model_candidates: list[tuple[str, str]] = []
+    if LLM_PROVIDER == "openai":
+        model_candidates.append(("openai", OPENAI_MODEL))
+        for m in openrouter_models:
+            model_candidates.append(("openrouter", m))
+    else:
+        for m in openrouter_models:
+            model_candidates.append(("openrouter", m))
+        if OPENAI_API_KEY:
+            model_candidates.append(("openai", OPENAI_MODEL))
+
     if not model_candidates:
         response.status_code = 503
-        return {"error": "llm_not_configured", "detail": "OPENROUTER_MODEL_PRIMARY is not set"}
+        return {"error": "llm_not_configured", "detail": "No LLM models configured"}
 
     persona = (req.persona or "Donald Trump").strip()
     system_prompt = PERSONA_PROMPTS.get(persona, PERSONA_PROMPTS["Donald Trump"])
@@ -167,23 +185,50 @@ async def respond(req: RespondRequest, response: Response):
                 json=payload,
             )
 
+    async def call_openai(model: str):
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": req.content},
+            ],
+            "temperature": 0.9,
+            "max_tokens": 500,
+        }
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            return await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+
     attempts = 0
     delay = INITIAL_DELAY
     last_error = None
-    used_model = model_candidates[0]
+    used_model = model_candidates[0][1]
+    used_provider = model_candidates[0][0]
     start_time = time.time()
 
     while attempts < MAX_ATTEMPTS:
         attempts += 1
         idx = min(attempts - 1, len(model_candidates) - 1)
-        used_model = model_candidates[idx]
+        used_provider, used_model = model_candidates[idx]
 
         attempt_start = time.time()
         try:
-            res = await call_openrouter(used_model)
+            if used_provider == "openai":
+                res = await call_openai(used_model)
+            else:
+                res = await call_openrouter(used_model)
             elapsed_ms = int((time.time() - attempt_start) * 1000)
             status = res.status_code
-            print(f"llm_call chat_id={req.chat_id} attempt={attempts} model={used_model} status={status} latency_ms={elapsed_ms}")
+            print(
+                f"llm_call chat_id={req.chat_id} attempt={attempts} provider={used_provider} "
+                f"model={used_model} status={status} latency_ms={elapsed_ms}"
+            )
 
             if 200 <= status < 300:
                 data = res.json()
@@ -197,6 +242,7 @@ async def respond(req: RespondRequest, response: Response):
                     return {
                         "content": content,
                         "model": used_model,
+                        "provider": used_provider,
                         "latency_ms": int((time.time() - start_time) * 1000),
                     }
 
@@ -212,7 +258,10 @@ async def respond(req: RespondRequest, response: Response):
                 last_error = {"error": "model_not_found", "detail": f"OpenRouter model not found: {used_model}"}
             elif status in (400, 401):
                 response.status_code = 503
-                last_error = {"error": "auth_or_bad_request", "detail": f"OpenRouter error {status} for model {used_model}"}
+                last_error = {
+                    "error": "auth_or_bad_request",
+                    "detail": f"{used_provider} error {status} for model {used_model}",
+                }
             elif status in (500, 502, 503, 504):
                 response.status_code = 503 if status in (503, 504) else 502
                 last_error = {"error": "upstream_unavailable", "detail": f"OpenRouter error {status}"}

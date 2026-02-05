@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "Trumpus",
+    "slug": "trumpus",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.trumpus",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "extra": {
+      "apiBaseUrl": "https://app.privetsuper.ru:18000/api/v1",
+      "googleAndroidClientId": "813736117005-6k1n7ku4ono5rt32vsu2deg6cffe83uh.apps.googleusercontent.com",
+      "googleWebClientId": "813736117005-jm3t8ousstjbra6tcbe2hpi6khoeqhor.apps.googleusercontent.com",
+      "eas": {
+        "projectId": "58c15bb6-30f2-47a2-b779-15316d36ff60"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}
