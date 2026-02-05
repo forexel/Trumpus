@@ -96,7 +96,7 @@ const styles = StyleSheet.create({
     minHeight: 12,
     fontSize: 11,
     color: '#bf0a30',
-    marginTop: 4,
+    marginTop: 5,
   },
   primaryButton: {
     marginTop: 10,
