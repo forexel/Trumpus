@@ -125,7 +125,7 @@ html, body {
   font-size: 13px;
   color: #002868;
   margin-bottom: 6px;
-  margin-top: 12px;
+  margin-top: 8px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -154,11 +154,11 @@ html, body {
 }
 
 .field-error {
-  min-height: 12px;
-  margin-top: 4px;
+  min-height: 8px;
+  margin-top: 1px;
   font-size: 11px;
   color: #bf0a30;
-  line-height: 12px;
+  line-height: 8px;
 }
 
 .auth-card input::placeholder {
@@ -177,7 +177,7 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-top: 16px;
+  margin-top: 12px;
 }
 
 .btn-primary {
@@ -272,7 +272,7 @@ html, body {
 }
 
 .store-buttons {
-  margin-top: 18px;
+  margin-top: 12px;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
@@ -288,12 +288,14 @@ html, body {
   align-items: center;
   gap: 10px;
   border: 1px solid #111827;
+  justify-content: flex-start;
 }
 
 .store-button img {
   width: 24px;
   height: 24px;
   object-fit: contain;
+  filter: invert(1) brightness(1.1);
 }
 
 .store-text {

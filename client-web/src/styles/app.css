@@ -1006,6 +1006,18 @@ input:not(.composer-bottom input):focus {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
 
+/* Auth inputs should stay white regardless of theme */
+.auth-card input {
+  background: #ffffff;
+  color: #1a1a1a;
+  border-color: #002868;
+}
+
+.auth-card input:focus {
+  border-color: #BF0A30;
+  box-shadow: 0 0 0 4px rgba(191, 10, 48, 0.2);
+}
+
 button:not(.back-btn):not(.logout-btn):not(.send-btn):not(.primary-btn):not(.theme-toggle):not(.persona-option) { 
   margin-top: 16px; 
   padding: 14px 20px; 
