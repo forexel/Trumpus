@@ -1746,3 +1746,20 @@ button.ghost:hover {
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
+.send-btn.stop {
+  background: #111827;
+  box-shadow: 0 4px 12px rgba(17, 24, 39, 0.3);
+}
+
+.send-btn.stop:hover {
+  background: #0f172a;
+  transform: none;
+}
+
+.stop-icon {
+  width: 16px;
+  height: 16px;
+  background: #ffffff;
+  border-radius: 2px;
+  display: inline-block;
+}

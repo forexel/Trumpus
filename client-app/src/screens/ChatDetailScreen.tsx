@@ -9,6 +9,7 @@ const demoMessages = [
 ];
 
 export default function ChatDetailScreen({ onBack }: { onBack: () => void }) {
+  const typing = true;
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
@@ -39,8 +40,8 @@ export default function ChatDetailScreen({ onBack }: { onBack: () => void }) {
 
       <View style={styles.composer}>
         <TextInput style={styles.input} placeholder="Type a message..." placeholderTextColor="#9ca3af" />
-        <Pressable style={styles.send}>
-          <Image source={eagle} style={styles.sendIcon} />
+        <Pressable style={[styles.send, typing ? styles.sendStop : null]}>
+          {typing ? <View style={styles.stopIcon} /> : <Image source={eagle} style={styles.sendIcon} />}
         </Pressable>
       </View>
     </View>
@@ -156,9 +157,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  sendStop: {
+    backgroundColor: '#111827',
+  },
   sendIcon: {
     width: 22,
     height: 22,
     tintColor: '#fff',
+  },
+  stopIcon: {
+    width: 14,
+    height: 14,
+    backgroundColor: '#ffffff',
+    borderRadius: 2,
   },
 });
