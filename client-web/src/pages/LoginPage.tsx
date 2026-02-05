@@ -67,8 +67,7 @@ export default function LoginPage() {
               placeholder="Enter your password"
               className={fieldErrors.password ? 'input-error' : ''}
             />
-            <div className="field-error">{fieldErrors.password ?? '\u00A0'}</div>
-            <div className="field-error">{error ? error : '\u00A0'}</div>
+            <div className="field-error">{fieldErrors.password || error ? (fieldErrors.password || error) : '\u00A0'}</div>
             <div className="auth-actions">
               <button className="btn-primary" type="submit" disabled={loading}>
                 {loading ? 'Signing in...' : 'Sign In'}
