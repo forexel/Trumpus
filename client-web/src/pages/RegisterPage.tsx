@@ -7,6 +7,7 @@ export default function RegisterPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string; confirm?: string }>({})
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
@@ -14,12 +15,15 @@ export default function RegisterPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (!email || !password || !confirm) {
-      setError('Fill all fields')
-      return
+    const nextErrors: { email?: string; password?: string; confirm?: string } = {}
+    if (!email) nextErrors.email = 'Required'
+    if (!password) nextErrors.password = 'Required'
+    if (!confirm) nextErrors.confirm = 'Required'
+    if (password && confirm && password !== confirm) {
+      nextErrors.confirm = 'Passwords do not match'
     }
-    if (password !== confirm) {
-      setError('Passwords do not match')
+    setFieldErrors(nextErrors)
+    if (Object.keys(nextErrors).length > 0) {
       return
     }
     try {
@@ -48,22 +52,32 @@ export default function RegisterPage() {
           <h1>Create Account</h1>
           <form onSubmit={onSubmit} className="form">
             <label>E-mail</label>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="mail@gmail.com" />
+            <input
+              className={fieldErrors.email ? 'input-error' : ''}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="mail@gmail.com"
+            />
+            <div className="field-error">{fieldErrors.email ?? '\u00A0'}</div>
             <label>Password</label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Create a password"
+              className={fieldErrors.password ? 'input-error' : ''}
             />
+            <div className="field-error">{fieldErrors.password ?? '\u00A0'}</div>
             <label>Confirm password</label>
             <input
               type="password"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
               placeholder="Confirm your password"
+              className={fieldErrors.confirm ? 'input-error' : ''}
             />
-            {error ? <div className="error">{error}</div> : null}
+            <div className="field-error">{fieldErrors.confirm ?? '\u00A0'}</div>
+            <div className="field-error">{error ? error : '\u00A0'}</div>
             <div className="auth-actions">
               <button className="btn-primary" type="submit" disabled={loading}>
                 {loading ? 'Creating account...' : 'Create Account'}

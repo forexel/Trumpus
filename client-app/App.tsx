@@ -1,94 +1,60 @@
 import { StatusBar } from 'expo-status-bar';
-import * as WebBrowser from 'expo-web-browser';
-import * as Google from 'expo-auth-session/providers/google';
-import { useEffect, useMemo, useState } from 'react';
-import { Pressable, SafeAreaView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { API_BASE_URL, GOOGLE_ANDROID_CLIENT_ID, GOOGLE_WEB_CLIENT_ID } from './src/config';
-
-WebBrowser.maybeCompleteAuthSession();
+import { useState } from 'react';
+import { SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import LoginScreen from './src/screens/LoginScreen';
+import RegisterScreen from './src/screens/RegisterScreen';
+import ForgotScreen from './src/screens/ForgotScreen';
+import ChatsScreen from './src/screens/ChatsScreen';
+import ChatDetailScreen from './src/screens/ChatDetailScreen';
+import ErrorScreen from './src/screens/ErrorScreen';
 
 export default function App() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [status, setStatus] = useState('Ready');
-
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
-    webClientId: GOOGLE_WEB_CLIENT_ID,
-  });
-
-  useEffect(() => {
-    async function handleGoogle() {
-      if (response?.type === 'success') {
-        const accessToken = response.authentication?.accessToken ?? '';
-        const idToken = response.authentication?.idToken ?? '';
-        try {
-          setStatus('Sending Google token to API...');
-          const res = await fetch(`${API_BASE_URL}/auth/google/mobile`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ access_token: accessToken, id_token: idToken }),
-          });
-          const data = await res.json();
-          if (!res.ok) {
-            setStatus(`Google login failed: ${data?.error ?? res.status}`);
-            return;
-          }
-          setStatus(`Logged in: ${data?.email ?? 'ok'} (client: ${data?.client_id ?? '-'})`);
-        } catch (err) {
-          setStatus(`Google login error: ${err instanceof Error ? err.message : 'unknown'}`);
-        }
-      } else if (response?.type === 'error') {
-        setStatus(`Google auth error: ${response.error?.message ?? 'unknown'}`);
-      }
-    }
-    handleGoogle();
-  }, [response]);
-
-  const apiBase = useMemo(() => API_BASE_URL, []);
+  const [screen, setScreen] = useState<'login' | 'register' | 'forgot' | 'chats' | 'chat'>('login');
+  const [status, setStatus] = useState('');
+  const [errorState, setErrorState] = useState<{
+    title: string;
+    message: string;
+    retry: () => void;
+  } | null>(null);
 
   return (
     <SafeAreaView style={styles.screen}>
-      <View style={styles.container}>
-        <Text style={styles.title}>Trumpus</Text>
-        <Text style={styles.subtitle}>Client app (Expo)</Text>
+      {errorState ? (
+        <ErrorScreen
+          title={errorState.title}
+          message={errorState.message}
+          onBack={() => {
+            setErrorState(null);
+            setScreen('login');
+          }}
+          onRetry={() => {
+            const retry = errorState.retry;
+            setErrorState(null);
+            retry();
+          }}
+        />
+      ) : null}
 
-        <View style={styles.card}>
-          <Text style={styles.label}>E-mail</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="mail@gmail.com"
-            placeholderTextColor="#9ca3af"
-            value={email}
-            onChangeText={setEmail}
-          />
-          <Text style={styles.label}>Password</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Enter your password"
-            placeholderTextColor="#9ca3af"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-          />
+      {!errorState && screen === 'login' ? (
+        <LoginScreen
+          onGoogleStatus={setStatus}
+          onForgot={() => setScreen('forgot')}
+          onRegister={() => setScreen('register')}
+          onLogin={() => setScreen('chats')}
+          onError={(title, message, retry) => setErrorState({ title, message, retry })}
+        />
+      ) : null}
+      {!errorState && screen === 'register' ? <RegisterScreen onBack={() => setScreen('login')} /> : null}
+      {!errorState && screen === 'forgot' ? <ForgotScreen onBack={() => setScreen('login')} /> : null}
+      {!errorState && screen === 'chats' ? <ChatsScreen onOpenChat={() => setScreen('chat')} /> : null}
+      {!errorState && screen === 'chat' ? <ChatDetailScreen onBack={() => setScreen('chats')} /> : null}
 
-          <Pressable style={styles.primaryButton} onPress={() => setStatus('TODO: email/password login')}>
-            <Text style={styles.primaryButtonText}>Sign In</Text>
-          </Pressable>
-
-          <Pressable
-            style={[styles.googleButton, !request && styles.googleButtonDisabled]}
-            onPress={() => promptAsync()}
-            disabled={!request}
-          >
-            <Text style={styles.googleButtonText}>Continue with Google</Text>
-          </Pressable>
+      {status ? (
+        <View style={styles.statusWrap}>
+          <Text style={styles.statusText}>{status}</Text>
         </View>
-
-        <Text style={styles.statusLabel}>API base: {apiBase}</Text>
-        <Text style={styles.statusText}>{status}</Text>
-      </View>
-      <StatusBar style="dark" />
+      ) : null}
+      <StatusBar style="light" />
     </SafeAreaView>
   );
 }
@@ -96,81 +62,20 @@ export default function App() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#0b1226',
   },
-  container: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 32,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  subtitle: {
-    marginTop: 6,
-    marginBottom: 24,
-    color: '#475569',
-  },
-  card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  label: {
-    fontSize: 12,
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-    color: '#1e293b',
-    marginBottom: 6,
-    marginTop: 12,
-    fontWeight: '600',
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#cbd5f5',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    color: '#0f172a',
-    backgroundColor: '#ffffff',
-  },
-  primaryButton: {
-    marginTop: 18,
-    backgroundColor: '#bf0a30',
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  primaryButtonText: {
-    color: '#ffffff',
-    fontWeight: '600',
-  },
-  googleButton: {
-    marginTop: 12,
-    backgroundColor: '#0b2d6b',
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  googleButtonDisabled: {
-    opacity: 0.6,
-  },
-  googleButtonText: {
-    color: '#ffffff',
-    fontWeight: '600',
-  },
-  statusLabel: {
-    marginTop: 18,
-    color: '#64748b',
-    fontSize: 12,
+  statusWrap: {
+    position: 'absolute',
+    left: 24,
+    right: 24,
+    bottom: 24,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 10,
+    padding: 10,
   },
   statusText: {
-    marginTop: 6,
-    color: '#0f172a',
-    fontSize: 13,
+    color: '#e2e8f0',
+    fontSize: 12,
+    textAlign: 'center',
   },
 });
