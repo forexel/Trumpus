@@ -8,7 +8,7 @@ Client app + admin panel + chat server + LLM worker.
 - DB: PostgreSQL (Docker)
 - Admin web: React + Vite
 - Client web: React + Vite
-- Mobile (planned): React Native + Expo
+- Mobile: React Native + Expo
 - LLM module: Python (FastAPI) service that calls LLM provider
 
 ## Repo Structure
@@ -16,7 +16,7 @@ Client app + admin panel + chat server + LLM worker.
 - `server/` - Go API
 - `admin-web/` - Admin UI (web)
 - `client-web/` - Client UI (web)
-- `client-app/` - Mobile (future)
+- `client-app/` - Mobile app (Expo)
 - `docs/` - Architecture, API, DB, decisions
 - `infra/` - Infra/scripts (future)
 
@@ -198,6 +198,45 @@ Client web:
 LLM worker:
 - `OPENROUTER_API_KEY=...`
 - `OPENROUTER_MODEL=openai/gpt-oss-120b:free`
+- `LLM_PROVIDER=openrouter|openai`
+- `OPENAI_API_KEY=...`
+- `OPENAI_MODEL=gpt-4o-mini`
+
+## Mobile App (Expo)
+
+Location: `client-app/`
+
+### Config (where to change API base)
+
+Edit `client-app/app.json`:
+
+```json
+"extra": {
+  "apiBaseUrl": "https://app.privetsuper.ru:18000/api/v1",
+  "googleAndroidClientId": "PASTE_ANDROID_CLIENT_ID_HERE",
+  "googleWebClientId": "PASTE_WEB_CLIENT_ID_HERE"
+}
+```
+
+When you move servers, update `apiBaseUrl` here.
+
+### Dev run
+
+```bash
+cd client-app
+npm install
+npx expo start
+```
+
+### Android build (Google Play)
+
+```bash
+npx expo login
+npx eas build -p android --profile production
+```
+
+Package name: `com.trumpus`  
+App name: `Trumpus`
 
 ### Google OAuth (Web client)
 

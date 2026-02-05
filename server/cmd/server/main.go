@@ -441,6 +441,7 @@ func main() {
 	mux.HandleFunc("/api/v1/auth/reset-password", withCORS(handleClientReset))
 	mux.HandleFunc("/api/v1/auth/google/start", handleGoogleStart(googleCfg))
 	mux.HandleFunc("/api/v1/auth/google/callback", handleGoogleCallback(googleCfg))
+	mux.HandleFunc("/api/v1/auth/google/mobile", withCORS(handleGoogleMobile(googleCfg)))
 
 	mux.HandleFunc("/api/v1/admin/login", withCORS(handleAdminLogin))
 	mux.HandleFunc("/api/v1/admin/clients", withCORS(requireAdminAuth(handleAdminClients)))
@@ -534,6 +535,11 @@ type googleTokenResponse struct {
 type googleUserInfo struct {
 	Email string `json:"email"`
 	Name  string `json:"name"`
+}
+
+type googleTokenInfo struct {
+	Email         string `json:"email"`
+	EmailVerified string `json:"email_verified"`
 }
 
 func handleGoogleCallback(cfg googleConfig) http.HandlerFunc {
@@ -647,6 +653,84 @@ func fetchGoogleUserInfo(accessToken string) (*googleUserInfo, error) {
 	var info googleUserInfo
 	if err := json.Unmarshal(body, &info); err != nil {
 		return nil, fmt.Errorf("userinfo parse failed")
+	}
+	return &info, nil
+}
+
+func handleGoogleMobile(cfg googleConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
+			return
+		}
+		if cfg.ClientID == "" {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "google oauth not configured"})
+			return
+		}
+
+		var payload struct {
+			IDToken     string `json:"id_token"`
+			AccessToken string `json:"access_token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid payload"})
+			return
+		}
+
+		email := ""
+
+		if strings.TrimSpace(payload.AccessToken) != "" {
+			userInfo, err := fetchGoogleUserInfo(payload.AccessToken)
+			if err == nil && userInfo.Email != "" {
+				email = userInfo.Email
+			}
+		}
+
+		if email == "" && strings.TrimSpace(payload.IDToken) != "" {
+			info, err := fetchGoogleTokenInfo(payload.IDToken)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, jsonMap{"error": "google token invalid"})
+				return
+			}
+			email = info.Email
+		}
+
+		if email == "" {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "email not found"})
+			return
+		}
+
+		client, err := store.getOrCreateClientByEmail(email)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, jsonMap{
+			"token":     "client-token",
+			"email":     email,
+			"client_id": client.ID,
+		})
+	}
+}
+
+func fetchGoogleTokenInfo(idToken string) (*googleTokenInfo, error) {
+	req, err := http.NewRequest(http.MethodGet, "https://oauth2.googleapis.com/tokeninfo?id_token="+url.QueryEscape(idToken), nil)
+	if err != nil {
+		return nil, fmt.Errorf("tokeninfo request failed")
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("tokeninfo request failed")
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, fmt.Errorf("tokeninfo failed")
+	}
+	var info googleTokenInfo
+	if err := json.Unmarshal(body, &info); err != nil {
+		return nil, fmt.Errorf("tokeninfo parse failed")
 	}
 	return &info, nil
 }
