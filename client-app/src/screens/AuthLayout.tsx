@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import { Image, ImageBackground, StyleSheet, Text, View } from 'react-native';
+import { Image, ImageBackground, KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const bg = require('../../assets/auth-bg.png');
@@ -11,14 +11,20 @@ export default function AuthLayout({ children, title }: { children: ReactNode; t
   return (
     <ImageBackground source={bg} style={styles.screen} resizeMode="cover">
       <View style={styles.overlay} />
-      <View style={[styles.content, { paddingTop: topOffset }]}>
-        <Image source={eagle} style={styles.eagle} />
-        <Text style={styles.brand}>Trumpus</Text>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>{title}</Text>
-          {children}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : 0}
+        style={styles.keyboard}
+      >
+        <View style={[styles.content, { paddingTop: topOffset }]}>
+          <Image source={eagle} style={styles.eagle} />
+          <Text style={styles.brand}>Trumpus</Text>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>{title}</Text>
+            {children}
+          </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </ImageBackground>
   );
 }
@@ -27,6 +33,9 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     justifyContent: 'flex-start',
+  },
+  keyboard: {
+    flex: 1,
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
