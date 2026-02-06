@@ -34,6 +34,11 @@ export default function LoginScreen({
   });
 
   useEffect(() => {
+    if (!request?.url) return;
+    onGoogleStatus(`Google auth url: ${request.url}`);
+  }, [request?.url]);
+
+  useEffect(() => {
     async function handleGoogle() {
       if (response?.type === 'success') {
         const accessToken = response.authentication?.accessToken ?? '';
@@ -143,7 +148,10 @@ export default function LoginScreen({
 
         <Pressable
           style={[styles.googleButton, !request && styles.googleButtonDisabled]}
-          onPress={() => promptAsync({ useProxy: false })}
+          onPress={() => {
+            onGoogleStatus(`Google auth start: redirect=${redirectUri} androidClientId=${GOOGLE_ANDROID_CLIENT_ID}`);
+            promptAsync({ useProxy: false });
+          }}
           disabled={!request}
         >
           <GoogleIcon width={18} height={18} />
