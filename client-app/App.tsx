@@ -23,7 +23,8 @@ export default function App() {
   const [chats, setChats] = useState<ChatItem[]>([]);
   const [activeChat, setActiveChat] = useState<ChatItem | null>(null);
   const [loadingChats, setLoadingChats] = useState(false);
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
+  const theme = { mode: themeMode };
 
   const loadChats = async () => {
     setLoadingChats(true);
@@ -133,7 +134,7 @@ export default function App() {
                 setScreen('chat');
               }}
               theme={theme}
-              onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              onToggleTheme={() => setThemeMode(themeMode === 'dark' ? 'light' : 'dark')}
               onLogout={handleLogout}
             />
           ) : null}
@@ -145,7 +146,7 @@ export default function App() {
                 setScreen('chats');
               }}
               theme={theme}
-              onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              onToggleTheme={() => setThemeMode(themeMode === 'dark' ? 'light' : 'dark')}
               onLogout={handleLogout}
             />
           ) : null}

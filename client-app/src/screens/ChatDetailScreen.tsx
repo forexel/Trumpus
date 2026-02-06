@@ -71,7 +71,7 @@ export default function ChatDetailScreen({
 }: {
   onBack: () => void;
   chat: ChatItem;
-  theme: 'dark' | 'light';
+  theme: { mode: 'dark' | 'light' };
   onToggleTheme: () => void;
   onLogout: () => void;
 }) {
@@ -124,7 +124,7 @@ export default function ChatDetailScreen({
     }, 2000);
   };
   const headerAvatar = avatarMap.get(chat.persona) ?? trump;
-  const isLight = theme === 'light';
+  const isLight = theme?.mode === 'light';
   const toggleX = useRef(new Animated.Value(isLight ? 0 : 24)).current;
   const colors = {
     bg: isLight ? '#f8fafc' : '#0b0b0b',
