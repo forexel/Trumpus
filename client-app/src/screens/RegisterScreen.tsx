@@ -98,7 +98,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     color: '#002868',
     fontWeight: '600',
-    marginTop: 8,
+    marginTop: 4,
   },
   input: {
     borderWidth: 1,
@@ -118,7 +118,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#bf0a30',
     marginTop: 5,
-    marginBottom: 2,
+    marginBottom: 0,
   },
   primaryButton: {
     marginTop: 10,
