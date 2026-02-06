@@ -356,6 +356,7 @@ const styles = StyleSheet.create({
   themeIcon: {
     fontSize: 12,
     color: '#ffffff',
+    lineHeight: 12,
   },
   themeIconDim: {
     opacity: 0.5,
