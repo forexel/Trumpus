@@ -62,7 +62,7 @@ export default function RegisterPage() {
               onChange={(e) => setEmail(e.target.value)}
               placeholder="mail@gmail.com"
             />
-            <div className="field-error">{fieldErrors.email ?? '\u00A0'}</div>
+            <div className="field-error">{fieldErrors.email ?? ''}</div>
             <label>Password</label>
             <input
               type="password"
@@ -71,7 +71,7 @@ export default function RegisterPage() {
               placeholder="Create a password"
               className={fieldErrors.password ? 'input-error' : ''}
             />
-            <div className="field-error">{fieldErrors.password ?? '\u00A0'}</div>
+            <div className="field-error">{fieldErrors.password ?? ''}</div>
             <label>Confirm password</label>
             <input
               type="password"
@@ -81,7 +81,7 @@ export default function RegisterPage() {
               className={fieldErrors.confirm ? 'input-error' : ''}
             />
             <div className="field-error">
-              {fieldErrors.confirm || error ? fieldErrors.confirm || error : '\u00A0'}
+              {fieldErrors.confirm || error ? fieldErrors.confirm || error : ''}
             </div>
             <div className="auth-actions">
               <button className="btn-primary" type="submit" disabled={loading}>
