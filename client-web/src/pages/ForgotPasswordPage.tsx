@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { forgotPassword } from '../lib/api'
+import eagleIcon from '../assets/eagle.png'
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
@@ -33,7 +34,10 @@ export default function ForgotPasswordPage() {
     <div className="auth-screen">
       <div className="auth-overlay" />
       <div className="auth-content">
-        <div className="auth-brand">Trumpus</div>
+        <img src={eagleIcon} alt="Eagle" className="auth-eagle" />
+        <div className="auth-brand">
+          <span className="auth-brand-text">Trumpus</span>
+        </div>
         <div className="auth-card">
           <h1>Restore password</h1>
           <form onSubmit={onSubmit} className="form">
