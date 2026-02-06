@@ -278,7 +278,6 @@ export default function ChatDetailPage() {
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
                       components={markdownComponents}
-                      transformLinkUri={safeUri}
                       urlTransform={safeUri}
                     >
                       {m.content}
