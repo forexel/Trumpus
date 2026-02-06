@@ -97,15 +97,7 @@ type Store struct {
 
 var (
 	store *Store
-
-	googleStateMu sync.Mutex
-	googleStates  = make(map[string]googleStateEntry)
 )
-
-type googleStateEntry struct {
-	RedirectURL string
-	CreatedAt   time.Time
-}
 
 func newStore(dsn string) (*Store, error) {
 	db, err := sql.Open("postgres", dsn)
@@ -732,6 +724,49 @@ func requireClientAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+
+const (
+	googleStateCookie    = "google_oauth_state"
+	googleRedirectCookie = "google_oauth_redirect"
+	googleCookieMaxAge   = 10 * 60 // 10 minutes
+)
+
+func setSecureCookie(w http.ResponseWriter, name, value string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    url.QueryEscape(value),
+		Path:     "/",
+		MaxAge:   googleCookieMaxAge,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func readSecureCookie(r *http.Request, name string) string {
+	c, err := r.Cookie(name)
+	if err != nil {
+		return ""
+	}
+	v, err := url.QueryUnescape(c.Value)
+	if err != nil {
+		return ""
+	}
+	return v
+}
+
+func clearCookie(w http.ResponseWriter, name string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
 type googleConfig struct {
 	ClientID     string
 	ClientSecret string
@@ -877,10 +912,11 @@ func handleGoogleStart(cfg googleConfig) http.HandlerFunc {
 			return
 		}
 
+		log.Printf("google_start redirect=%s", redirect)
+
 		state := nextID("state")
-		googleStateMu.Lock()
-		googleStates[state] = googleStateEntry{RedirectURL: redirect, CreatedAt: time.Now()}
-		googleStateMu.Unlock()
+		setSecureCookie(w, googleStateCookie, state)
+		setSecureCookie(w, googleRedirectCookie, redirect)
 
 		q := url.Values{}
 		q.Set("client_id", cfg.ClientID)
@@ -928,14 +964,20 @@ func handleGoogleCallback(cfg googleConfig) http.HandlerFunc {
 			return
 		}
 
-		googleStateMu.Lock()
-		stateEntry, ok := googleStates[state]
-		if ok {
-			delete(googleStates, state)
-		}
-		googleStateMu.Unlock()
-		if !ok {
+		log.Printf("google_callback state=%s code_len=%d", state, len(code))
+
+		cookieState := readSecureCookie(r, googleStateCookie)
+		redirectStr := readSecureCookie(r, googleRedirectCookie)
+		// One-shot: clear cookies regardless of outcome
+		clearCookie(w, googleStateCookie)
+		clearCookie(w, googleRedirectCookie)
+
+		if cookieState == "" || cookieState != state {
 			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid state"})
+			return
+		}
+		if redirectStr == "" {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "redirect required"})
 			return
 		}
 
@@ -964,7 +1006,7 @@ func handleGoogleCallback(cfg googleConfig) http.HandlerFunc {
 		}
 
 		// For web redirect, return tokens in query params (MVP).
-		redirectURL, err := url.Parse(stateEntry.RedirectURL)
+		redirectURL, err := url.Parse(redirectStr)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid redirect"})
 			return
@@ -1000,8 +1042,8 @@ func exchangeGoogleCode(code string, cfg googleConfig) (*googleTokenResponse, er
 		return nil, fmt.Errorf("token request failed")
 	}
 	defer res.Body.Close()
-
 	body, _ := io.ReadAll(res.Body)
+	log.Printf("google_token_exchange status=%d body=%s", res.StatusCode, strings.TrimSpace(string(body)))
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return nil, fmt.Errorf("token exchange failed")
 	}
@@ -1025,8 +1067,8 @@ func fetchGoogleUserInfo(accessToken string) (*googleUserInfo, error) {
 		return nil, fmt.Errorf("userinfo request failed")
 	}
 	defer res.Body.Close()
-
 	body, _ := io.ReadAll(res.Body)
+	log.Printf("google_userinfo status=%d body=%s", res.StatusCode, strings.TrimSpace(string(body)))
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return nil, fmt.Errorf("userinfo failed")
 	}

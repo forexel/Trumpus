@@ -62,7 +62,7 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
               placeholder="mail@gmail.com"
             />
-            <div className="field-error">{fieldErrors.email ?? '\u00A0'}</div>
+            <div className="field-error">{fieldErrors.email ?? ''}</div>
             <label>Password</label>
             <input
               type="password"
@@ -71,7 +71,7 @@ export default function LoginPage() {
               placeholder="Enter your password"
               className={fieldErrors.password ? 'input-error' : ''}
             />
-            <div className="field-error">{fieldErrors.password || error ? (fieldErrors.password || error) : '\u00A0'}</div>
+            <div className="field-error">{fieldErrors.password || error ? (fieldErrors.password || error) : ''}</div>
             <div className="auth-actions">
               <button className="btn-primary" type="submit" disabled={loading}>
                 {loading ? 'Signing in...' : 'Sign In'}
