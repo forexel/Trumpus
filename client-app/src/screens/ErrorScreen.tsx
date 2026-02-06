@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import AuthLayout from './AuthLayout';
 
 export type ErrorScreenProps = {
   title: string;
@@ -9,9 +10,8 @@ export type ErrorScreenProps = {
 
 export default function ErrorScreen({ title, message, onBack, onRetry }: ErrorScreenProps) {
   return (
-    <View style={styles.screen}>
+    <AuthLayout title={title}>
       <View style={styles.card}>
-        <Text style={styles.title}>{title}</Text>
         <Text style={styles.message}>{message}</Text>
         <View style={styles.actions}>
           <Pressable style={[styles.button, styles.buttonGhost]} onPress={onBack}>
@@ -22,35 +22,19 @@ export default function ErrorScreen({ title, message, onBack, onRetry }: ErrorSc
           </Pressable>
         </View>
       </View>
-    </View>
+    </AuthLayout>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: '#0b0b0b',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
   card: {
     width: '100%',
     maxWidth: 360,
-    backgroundColor: '#111214',
-    borderRadius: 18,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#1f2937',
-  },
-  title: {
-    color: '#ffffff',
-    fontSize: 20,
-    fontWeight: '700',
-    marginBottom: 8,
+    padding: 8,
+    gap: 10,
   },
   message: {
-    color: '#cbd5f5',
+    color: '#1f2937',
     fontSize: 14,
     lineHeight: 20,
   },
@@ -69,13 +53,13 @@ const styles = StyleSheet.create({
   buttonGhost: {
     backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: '#475569',
+    borderColor: '#002868',
   },
   buttonText: {
     color: '#ffffff',
     fontWeight: '600',
   },
   buttonTextGhost: {
-    color: '#e2e8f0',
+    color: '#002868',
   },
 });

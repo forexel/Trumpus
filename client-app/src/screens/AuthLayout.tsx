@@ -1,14 +1,17 @@
 import { ReactNode } from 'react';
 import { Image, ImageBackground, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const bg = require('../../assets/auth-bg.png');
 const eagle = require('../../assets/eagle.png');
 
 export default function AuthLayout({ children, title }: { children: ReactNode; title: string }) {
+  const insets = useSafeAreaInsets();
+  const topOffset = Math.max(insets.top + 20, 72);
   return (
     <ImageBackground source={bg} style={styles.screen} resizeMode="cover">
       <View style={styles.overlay} />
-      <View style={styles.content}>
+      <View style={[styles.content, { paddingTop: topOffset }]}>
         <Image source={eagle} style={styles.eagle} />
         <Text style={styles.brand}>Trumpus</Text>
         <View style={styles.card}>
@@ -23,7 +26,7 @@ export default function AuthLayout({ children, title }: { children: ReactNode; t
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
@@ -33,7 +36,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     alignItems: 'center',
     gap: 12,
-    marginTop: -60,
+    paddingBottom: 24,
   },
   eagle: {
     width: 80,
