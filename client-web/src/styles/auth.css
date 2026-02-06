@@ -57,7 +57,7 @@ html, body {
   flex-direction: column;
   align-items: center;
   gap: 16px;
-  margin-top: -84px;
+  margin-top: -104px;
 }
 
 .auth-brand {
@@ -157,16 +157,16 @@ html, body {
 }
 
 .field-error {
-  min-height: 6px;
+  min-height: 12px;
   margin-top: 5px;
   margin-bottom: 0;
   font-size: 11px;
   color: #bf0a30;
-  line-height: 6px;
+  line-height: 12px;
 }
 
 .field-error + label {
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .auth-card input::placeholder {
@@ -258,6 +258,12 @@ html, body {
 [data-theme="dark"] .auth-card h1,
 [data-theme="dark"] .auth-card label {
   color: #e5e7eb;
+}
+
+[data-theme="dark"] .auth-card input,
+[data-theme="dark"] .auth-card input.input-error {
+  background: #ffffff !important;
+  color: #1a1a1a !important;
 }
 
 .btn-google:hover {

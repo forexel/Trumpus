@@ -133,7 +133,11 @@ export default function ChatsScreen({
   };
 
   return (
-    <View style={[styles.screen, { backgroundColor: colors.bg, paddingBottom: insets.bottom || 12 }]}>
+    <KeyboardAvoidingView
+      style={[styles.screen, { backgroundColor: colors.bg }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : 56 + (insets.top || 0)}
+    >
       <View
         style={[
           styles.header,
@@ -144,6 +148,9 @@ export default function ChatsScreen({
           },
         ]}
       >
+        {hasChats && showNewChat ? (
+          <Pressable style={[styles.back, { borderColor: colors.text }]} onPress={() => setShowNewChat(false)} />
+        ) : null}
         <Text style={[styles.headerBrand, { color: colors.text }]}>Trumpus</Text>
         <View style={styles.headerActions}>
           <Pressable style={[styles.themeToggle, isLight ? styles.themeToggleLight : styles.themeToggleDark]} onPress={onToggleTheme}>
@@ -162,7 +169,7 @@ export default function ChatsScreen({
       </View>
 
       {hasChats && !showNewChat ? (
-        <ScrollView contentContainerStyle={styles.listWrap}>
+        <ScrollView contentContainerStyle={styles.listWrap} keyboardShouldPersistTaps="handled">
           {listItems.map((chat) => {
             const avatar = avatarMap.get(chat.persona) ?? trump;
             return (
@@ -242,27 +249,31 @@ export default function ChatsScreen({
         </Pressable>
       ) : null}
       {!hasChats || showNewChat ? (
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : 0}
-        >
-          <View style={[styles.composer, { borderTopColor: colors.headerBorder, backgroundColor: colors.bg }]}> 
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
-              placeholder="Type a message..."
-              placeholderTextColor={colors.muted}
-              value={text}
-              onChangeText={setText}
-            />
-            <Pressable style={[styles.send, sending ? styles.sendDisabled : null]} onPress={handleStart} disabled={sending}>
-              <Image source={eagle} style={styles.sendIcon} />
-            </Pressable>
-          </View>
-        </KeyboardAvoidingView>
+        <View
+          style={[
+            styles.composer,
+            {
+              borderTopColor: colors.headerBorder,
+              backgroundColor: colors.bg,
+              paddingBottom: Math.max(insets.bottom, 4),
+            },
+          ]}
+        > 
+          <TextInput
+            style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
+            placeholder="Type a message..."
+            placeholderTextColor={colors.muted}
+            value={text}
+            onChangeText={setText}
+          />
+          <Pressable style={[styles.send, sending ? styles.sendDisabled : null]} onPress={handleStart} disabled={sending}>
+            <Image source={eagle} style={styles.sendIcon} />
+          </Pressable>
+        </View>
       ) : null}
       {!hasChats && error ? <Text style={styles.errorText}>{error}</Text> : null}
       {loading ? <Text style={styles.loadingText}>Loading...</Text> : null}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -278,6 +289,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     flexDirection: 'row',
+    gap: 8,
+  },
+  back: {
+    width: 22,
+    height: 22,
+    borderLeftWidth: 2,
+    borderBottomWidth: 2,
+    transform: [{ rotate: '45deg' }],
   },
   headerBrand: {
     fontSize: 20,
