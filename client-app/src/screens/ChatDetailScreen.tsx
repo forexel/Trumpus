@@ -27,7 +27,19 @@ const personas = [
   { name: 'Jeffrey Epstein', avatar: epstein },
 ];
 
-export default function ChatDetailScreen({ onBack, chat }: { onBack: () => void; chat: ChatItem }) {
+export default function ChatDetailScreen({
+  onBack,
+  chat,
+  theme,
+  onToggleTheme,
+  onLogout,
+}: {
+  onBack: () => void;
+  chat: ChatItem;
+  theme: 'dark' | 'light';
+  onToggleTheme: () => void;
+  onLogout: () => void;
+}) {
   const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [text, setText] = useState('');
@@ -76,16 +88,36 @@ export default function ChatDetailScreen({ onBack, chat }: { onBack: () => void;
     }, 2000);
   };
   const headerAvatar = avatarMap.get(chat.persona) ?? trump;
+  const isLight = theme === 'light';
+  const colors = {
+    bg: isLight ? '#f8fafc' : '#0b0b0b',
+    headerBorder: isLight ? '#e2e8f0' : '#1f2937',
+    text: isLight ? '#0f172a' : '#ffffff',
+    subtext: isLight ? '#64748b' : '#94a3b8',
+    aiBubble: isLight ? '#0b2d6b' : '#0b2d6b',
+    userBubble: '#bf0a30',
+    inputBg: isLight ? '#ffffff' : '#1f1f1f',
+    inputBorder: isLight ? '#cbd5e1' : '#30343a',
+  };
 
   return (
-    <View style={[styles.screen, { paddingBottom: insets.bottom || 12 }]}>
-      <View style={styles.header}>
+    <View style={[styles.screen, { paddingBottom: insets.bottom || 12, backgroundColor: colors.bg }]}>
+      <View style={[styles.header, { borderBottomColor: colors.headerBorder }]}>
         <Pressable style={styles.back} onPress={onBack} />
         <Text style={styles.flag}>🇺🇸</Text>
         <Image source={headerAvatar} style={styles.avatar} />
         <View style={styles.headerInfo}>
-          <Text style={styles.headerName}>{chat.title || chat.persona}</Text>
+          <Text style={[styles.headerName, { color: colors.text }]}>{chat.title || chat.persona}</Text>
           <Text style={styles.headerStatus}>online</Text>
+        </View>
+        <View style={styles.headerActions}>
+          <Pressable style={[styles.themeToggle, isLight ? styles.themeToggleLight : styles.themeToggleDark]} onPress={onToggleTheme}>
+            <View style={[styles.themeKnob, isLight ? styles.themeKnobLight : styles.themeKnobDark]} />
+            <Text style={styles.themeLabel}>{isLight ? 'Light' : 'Dark'}</Text>
+          </Pressable>
+          <Pressable style={styles.logoutBtn} onPress={onLogout}>
+            <Text style={styles.logoutText}>Exit</Text>
+          </Pressable>
         </View>
       </View>
 
@@ -95,7 +127,14 @@ export default function ChatDetailScreen({ onBack, chat }: { onBack: () => void;
         onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
       >
         {messages.map((m) => (
-          <View key={m.id} style={[styles.bubble, m.sender === 'client' ? styles.userBubble : styles.aiBubble]}>
+          <View
+            key={m.id}
+            style={[
+              styles.bubble,
+              m.sender === 'client' ? styles.userBubble : styles.aiBubble,
+              { backgroundColor: m.sender === 'client' ? colors.userBubble : colors.aiBubble },
+            ]}
+          >
             <Text style={styles.bubbleText}>{m.content}</Text>
             <Text style={styles.bubbleTime}>
               {m.created_at ? new Date(m.created_at).toLocaleTimeString().slice(0, 5) : ''}
@@ -103,7 +142,7 @@ export default function ChatDetailScreen({ onBack, chat }: { onBack: () => void;
           </View>
         ))}
         {typing ? (
-          <View style={[styles.bubble, styles.aiBubble]}>
+          <View style={[styles.bubble, styles.aiBubble, { backgroundColor: colors.aiBubble }]}>
             <View style={styles.typingDots}>
               <View style={styles.dot} />
               <View style={styles.dot} />
@@ -113,9 +152,9 @@ export default function ChatDetailScreen({ onBack, chat }: { onBack: () => void;
         ) : null}
       </ScrollView>
 
-      <View style={styles.composer}>
+      <View style={[styles.composer, { borderTopColor: colors.headerBorder, backgroundColor: colors.bg }]}>
         <TextInput
-          style={styles.input}
+          style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
           placeholder="Type a message..."
           placeholderTextColor="#9ca3af"
           value={text}
@@ -154,13 +193,11 @@ export default function ChatDetailScreen({ onBack, chat }: { onBack: () => void;
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#0b0b0b',
   },
   header: {
     height: 60,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#1f2937',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -186,7 +223,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   headerName: {
-    color: '#ffffff',
     fontWeight: '700',
   },
   headerStatus: {
@@ -204,11 +240,9 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   aiBubble: {
-    backgroundColor: '#0b2d6b',
     alignSelf: 'flex-start',
   },
   userBubble: {
-    backgroundColor: '#bf0a30',
     alignSelf: 'flex-end',
   },
   bubbleText: {
@@ -240,17 +274,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderTopWidth: 1,
-    borderTopColor: '#1f2937',
   },
   input: {
     flex: 1,
-    backgroundColor: '#1f1f1f',
     borderRadius: 999,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    color: '#ffffff',
     borderWidth: 1,
-    borderColor: '#30343a',
   },
   send: {
     width: 44,
@@ -273,5 +303,55 @@ const styles = StyleSheet.create({
     height: 14,
     backgroundColor: '#ffffff',
     borderRadius: 2,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  themeToggle: {
+    height: 28,
+    minWidth: 70,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  themeToggleDark: {
+    backgroundColor: '#3f0a1a',
+  },
+  themeToggleLight: {
+    backgroundColor: '#bf0a30',
+  },
+  themeKnob: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+  },
+  themeKnobDark: {
+    backgroundColor: '#ffffff',
+    alignSelf: 'flex-end',
+  },
+  themeKnobLight: {
+    backgroundColor: '#ffffff',
+    alignSelf: 'flex-start',
+  },
+  themeLabel: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  logoutBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#374151',
+  },
+  logoutText: {
+    color: '#e2e8f0',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

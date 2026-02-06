@@ -1,13 +1,14 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
 import ForgotScreen from './src/screens/ForgotScreen';
 import ChatsScreen from './src/screens/ChatsScreen';
 import ChatDetailScreen from './src/screens/ChatDetailScreen';
 import ErrorScreen from './src/screens/ErrorScreen';
-import { getAccessToken, refreshTokens } from './src/lib/auth';
+import { clearTokens, getAccessToken, refreshTokens } from './src/lib/auth';
 import { ChatItem, fetchChats } from './src/lib/api';
 
 export default function App() {
@@ -22,6 +23,7 @@ export default function App() {
   const [chats, setChats] = useState<ChatItem[]>([]);
   const [activeChat, setActiveChat] = useState<ChatItem | null>(null);
   const [loadingChats, setLoadingChats] = useState(false);
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
 
   const loadChats = async () => {
     setLoadingChats(true);
@@ -57,10 +59,18 @@ export default function App() {
     bootstrap();
   }, []);
 
+  const handleLogout = async () => {
+    await clearTokens();
+    setChats([]);
+    setActiveChat(null);
+    setScreen('login');
+  };
+
   return (
-    <SafeAreaView style={styles.screen}>
-      {!authReady ? null : (
-        <>
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
+        {!authReady ? null : (
+          <>
           {errorState ? (
             <ErrorScreen
               title={errorState.title}
@@ -122,6 +132,9 @@ export default function App() {
                 setActiveChat(chat);
                 setScreen('chat');
               }}
+              theme={theme}
+              onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              onLogout={handleLogout}
             />
           ) : null}
           {!errorState && screen === 'chat' && activeChat ? (
@@ -131,6 +144,9 @@ export default function App() {
                 await loadChats();
                 setScreen('chats');
               }}
+              theme={theme}
+              onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              onLogout={handleLogout}
             />
           ) : null}
         </>
@@ -142,7 +158,8 @@ export default function App() {
         </View>
       ) : null}
       <StatusBar style="light" />
-    </SafeAreaView>
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
