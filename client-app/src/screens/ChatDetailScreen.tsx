@@ -1,4 +1,4 @@
-import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Animated, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -124,6 +124,7 @@ export default function ChatDetailScreen({
   };
   const headerAvatar = avatarMap.get(chat.persona) ?? trump;
   const isLight = theme === 'light';
+  const toggleX = useRef(new Animated.Value(isLight ? 0 : 24)).current;
   const colors = {
     bg: isLight ? '#f8fafc' : '#0b0b0b',
     headerBorder: isLight ? '#e2e8f0' : '#1f2937',
@@ -169,7 +170,7 @@ export default function ChatDetailScreen({
             <View style={[styles.themeIconWrap, styles.themeIconRight, !isLight ? styles.themeIconDim : null]}>
               <SunIcon />
             </View>
-            <View style={[styles.themeKnob, isLight ? styles.themeKnobLeft : styles.themeKnobRight]} />
+            <Animated.View style={[styles.themeKnob, { transform: [{ translateX: toggleX }] }]} />
           </Pressable>
           <Pressable style={styles.logoutBtn} onPress={onLogout}>
             <LogoutIcon />
@@ -425,12 +426,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     position: 'absolute',
     top: 3,
-  },
-  themeKnobLeft: {
     left: 3,
-  },
-  themeKnobRight: {
-    left: 27,
   },
   logoutBtn: {
     width: 28,
@@ -447,3 +443,10 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+  useEffect(() => {
+    Animated.timing(toggleX, {
+      toValue: isLight ? 0 : 24,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [isLight, toggleX]);
