@@ -49,24 +49,31 @@ export default function LoginPage() {
     <div className="auth-screen">
       <div className="auth-overlay" />
       <div className="auth-content">
-        <img src={eagleIcon} alt="Eagle" className="auth-eagle" />
+        <img src={eagleIcon} alt="Eagle" className="auth-eagle" decoding="async" loading="eager" />
         <div className="auth-brand">
           <span className="auth-brand-text">Trumpus</span>
         </div>
         <div className="auth-card">
           <h1>Welcome Back</h1>
           <form onSubmit={onSubmit} className="form">
-            <label>E-mail</label>
+            <label htmlFor="email">E-mail</label>
             <input
+              id="email"
+              name="email"
+              autoComplete="email"
+              inputMode="email"
               className={fieldErrors.email ? 'input-error' : ''}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="mail@gmail.com"
             />
             <div className="field-error">{fieldErrors.email ?? ''}</div>
-            <label>Password</label>
+            <label htmlFor="password">Password</label>
             <input
+              id="password"
+              name="password"
               type="password"
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter your password"

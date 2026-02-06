@@ -279,7 +279,7 @@ export default function ChatDetailPage() {
                       remarkPlugins={[remarkGfm]}
                       components={markdownComponents}
                       transformLinkUri={safeUri}
-                      transformImageUri={safeUri}
+                      urlTransform={safeUri}
                     >
                       {m.content}
                     </ReactMarkdown>

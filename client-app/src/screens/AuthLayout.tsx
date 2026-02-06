@@ -8,16 +8,17 @@ const eagle = require('../../assets/eagle.png');
 export default function AuthLayout({ children, title }: { children: ReactNode; title: string }) {
   const insets = useSafeAreaInsets();
   const topOffset = Math.max(insets.top, 52);
+  const liftedTop = Math.max(0, topOffset - 20);
   return (
     <ImageBackground source={bg} style={styles.screen} resizeMode="cover">
       <View style={styles.overlay} />
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'position'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : Math.max(insets.top, 24)}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : 0}
         style={styles.keyboard}
       >
         <ScrollView
-          contentContainerStyle={[styles.content, { paddingTop: topOffset, paddingBottom: insets.bottom + 24 }]}
+          contentContainerStyle={[styles.content, { paddingTop: liftedTop, paddingBottom: insets.bottom + 24 }]}
           keyboardShouldPersistTaps="handled"
         >
           <Image source={eagle} style={styles.eagle} />
