@@ -1,4 +1,4 @@
-import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useEffect, useMemo, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import eagle from '../../assets/eagle.png';
@@ -52,6 +52,7 @@ export default function ChatsScreen({
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const [showNewChat, setShowNewChat] = useState(false);
   const isLight = theme === 'light';
   const colors = {
     bg: isLight ? '#f8fafc' : '#0b0b0b',
@@ -87,6 +88,7 @@ export default function ChatsScreen({
       const chat = await createChat(persona, '');
       await sendMessage(chat.id, text.trim(), persona);
       setText('');
+      setShowNewChat(false);
       onStartChat(chat);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start chat');
@@ -110,16 +112,17 @@ export default function ChatsScreen({
         <Text style={[styles.headerBrand, { color: colors.text }]}>Trumpus</Text>
         <View style={styles.headerActions}>
           <Pressable style={[styles.themeToggle, isLight ? styles.themeToggleLight : styles.themeToggleDark]} onPress={onToggleTheme}>
-            <View style={[styles.themeKnob, isLight ? styles.themeKnobLight : styles.themeKnobDark]} />
-            <Text style={styles.themeLabel}>{isLight ? 'Light' : 'Dark'}</Text>
+            <Text style={[styles.themeIcon, isLight ? styles.themeIconDim : null]}>☾</Text>
+            <Text style={[styles.themeIcon, !isLight ? styles.themeIconDim : null]}>☀</Text>
+            <View style={[styles.themeKnob, isLight ? styles.themeKnobLeft : styles.themeKnobRight]} />
           </Pressable>
           <Pressable style={styles.logoutBtn} onPress={onLogout}>
-            <Text style={styles.logoutText}>Exit</Text>
+            <Text style={styles.logoutIcon}>⎋</Text>
           </Pressable>
         </View>
       </View>
 
-      {hasChats ? (
+      {hasChats && !showNewChat ? (
         <ScrollView contentContainerStyle={styles.listWrap}>
           {listItems.map((chat) => {
             const avatar = avatarMap.get(chat.persona) ?? trump;
@@ -127,7 +130,10 @@ export default function ChatsScreen({
               <Pressable
                 key={chat.id}
                 style={[styles.row, { borderBottomColor: colors.border }]}
-                onPress={() => onOpenChat(chat)}
+                onPress={() => {
+                  setShowNewChat(false);
+                  onOpenChat(chat);
+                }}
               >
                 <View style={[styles.rowInner, { backgroundColor: colors.cardBg }]}>
                   <Image source={avatar} style={styles.avatar} />
@@ -191,19 +197,29 @@ export default function ChatsScreen({
         </View>
       )}
 
-      {!hasChats ? (
-        <View style={[styles.composer, { borderTopColor: colors.headerBorder, backgroundColor: colors.bg }]}>
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
-            placeholder="Type a message..."
-            placeholderTextColor={colors.muted}
-            value={text}
-            onChangeText={setText}
-          />
-          <Pressable style={[styles.send, sending ? styles.sendDisabled : null]} onPress={handleStart} disabled={sending}>
-            <Image source={eagle} style={styles.sendIcon} />
-          </Pressable>
-        </View>
+      {hasChats && !showNewChat ? (
+        <Pressable style={[styles.newChatBtn, { bottom: (insets.bottom || 0) + 24 }]} onPress={() => setShowNewChat(true)}>
+          <Text style={styles.newChatText}>New chat</Text>
+        </Pressable>
+      ) : null}
+      {!hasChats || showNewChat ? (
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : 0}
+        >
+          <View style={[styles.composer, { borderTopColor: colors.headerBorder, backgroundColor: colors.bg }]}> 
+            <TextInput
+              style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
+              placeholder="Type a message..."
+              placeholderTextColor={colors.muted}
+              value={text}
+              onChangeText={setText}
+            />
+            <Pressable style={[styles.send, sending ? styles.sendDisabled : null]} onPress={handleStart} disabled={sending}>
+              <Image source={eagle} style={styles.sendIcon} />
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
       ) : null}
       {!hasChats && error ? <Text style={styles.errorText}>{error}</Text> : null}
       {loading ? <Text style={styles.loadingText}>Loading...</Text> : null}
@@ -235,12 +251,14 @@ const styles = StyleSheet.create({
   },
   themeToggle: {
     height: 28,
-    minWidth: 70,
+    minWidth: 86,
     borderRadius: 999,
     paddingHorizontal: 8,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 6,
+    position: 'relative',
   },
   themeToggleDark: {
     backgroundColor: '#3f0a1a',
@@ -248,35 +266,40 @@ const styles = StyleSheet.create({
   themeToggleLight: {
     backgroundColor: '#bf0a30',
   },
+  themeIcon: {
+    fontSize: 12,
+    color: '#ffffff',
+  },
+  themeIconDim: {
+    opacity: 0.5,
+  },
   themeKnob: {
     width: 18,
     height: 18,
     borderRadius: 9,
-  },
-  themeKnobDark: {
     backgroundColor: '#ffffff',
-    alignSelf: 'flex-end',
+    position: 'absolute',
+    top: 5,
   },
-  themeKnobLight: {
-    backgroundColor: '#ffffff',
-    alignSelf: 'flex-start',
+  themeKnobLeft: {
+    left: 6,
   },
-  themeLabel: {
-    color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '600',
+  themeKnobRight: {
+    right: 6,
   },
   logoutBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
+    width: 28,
+    height: 28,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#374151',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  logoutText: {
+  logoutIcon: {
     color: '#e2e8f0',
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
   },
   listWrap: {
     paddingVertical: 8,
@@ -435,6 +458,19 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     tintColor: '#fff',
+  },
+  newChatBtn: {
+    position: 'absolute',
+    bottom: 24,
+    alignSelf: 'center',
+    backgroundColor: '#bf0a30',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 999,
+  },
+  newChatText: {
+    color: '#fff',
+    fontWeight: '600',
   },
   errorText: {
     color: '#f87171',
