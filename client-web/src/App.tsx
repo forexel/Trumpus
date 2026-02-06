@@ -11,7 +11,7 @@ import ResetPasswordPage from './pages/ResetPasswordPage'
 
 export default function App() {
   const location = useLocation()
-  const token = localStorage.getItem('client_token')
+  const token = localStorage.getItem('access_token') || localStorage.getItem('client_token')
   const isMobileRoute =
     location.pathname === '/' ||
     location.pathname.startsWith('/login') ||

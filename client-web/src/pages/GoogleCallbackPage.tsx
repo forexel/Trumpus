@@ -14,6 +14,7 @@ export default function GoogleCallbackPage() {
     const clientId = params.get('client_id')
     if (accessToken && refreshToken) {
       localStorage.setItem('access_token', accessToken)
+      localStorage.setItem('client_token', accessToken)
       localStorage.setItem('refresh_token', refreshToken)
       if (accessExpires) {
         localStorage.setItem('access_expires', accessExpires)
