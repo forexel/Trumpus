@@ -1,4 +1,5 @@
 import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import eagle from '../../assets/eagle.png';
@@ -26,6 +27,40 @@ const personas = [
   { name: 'Mark Zuckerberg', avatar: zuck },
   { name: 'Jeffrey Epstein', avatar: epstein },
 ];
+
+function MoonIcon() {
+  return (
+    <Svg width={14} height={14} viewBox="0 0 24 24" fill="none">
+      <Path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+function SunIcon() {
+  return (
+    <Svg width={14} height={14} viewBox="0 0 24 24" fill="none">
+      <Circle cx="12" cy="12" r="4" stroke="#ffffff" strokeWidth={2} />
+      <Line x1="12" y1="1" x2="12" y2="3" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
+      <Line x1="12" y1="21" x2="12" y2="23" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
+      <Line x1="4.22" y1="4.22" x2="5.64" y2="5.64" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
+      <Line x1="18.36" y1="18.36" x2="19.78" y2="19.78" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
+      <Line x1="1" y1="12" x2="3" y2="12" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
+      <Line x1="21" y1="12" x2="23" y2="12" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
+      <Line x1="4.22" y1="19.78" x2="5.64" y2="18.36" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
+      <Line x1="18.36" y1="5.64" x2="19.78" y2="4.22" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+function LogoutIcon() {
+  return (
+    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+      <Path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke="#e2e8f0" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M16 17l5-5-5-5" stroke="#e2e8f0" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Line x1="21" y1="12" x2="9" y2="12" stroke="#e2e8f0" strokeWidth={2} strokeLinecap="round" />
+    </Svg>
+  );
+}
 
 export default function ChatDetailScreen({
   onBack,
@@ -122,12 +157,16 @@ export default function ChatDetailScreen({
         </View>
         <View style={styles.headerActions}>
           <Pressable style={[styles.themeToggle, isLight ? styles.themeToggleLight : styles.themeToggleDark]} onPress={onToggleTheme}>
-            <Text style={[styles.themeIcon, isLight ? styles.themeIconDim : null]}>☾</Text>
-            <Text style={[styles.themeIcon, !isLight ? styles.themeIconDim : null]}>☀</Text>
+            <View style={[styles.themeIconWrap, styles.themeIconLeft, isLight ? styles.themeIconDim : null]}>
+              <MoonIcon />
+            </View>
+            <View style={[styles.themeIconWrap, styles.themeIconRight, !isLight ? styles.themeIconDim : null]}>
+              <SunIcon />
+            </View>
             <View style={[styles.themeKnob, isLight ? styles.themeKnobLeft : styles.themeKnobRight]} />
           </Pressable>
           <Pressable style={styles.logoutBtn} onPress={onLogout}>
-            <Text style={styles.logoutIcon}>⎋</Text>
+            <LogoutIcon />
           </Pressable>
         </View>
       </View>
@@ -338,13 +377,13 @@ const styles = StyleSheet.create({
   },
   themeToggle: {
     height: 28,
-    minWidth: 86,
+    width: 52,
     borderRadius: 999,
-    paddingHorizontal: 8,
+    paddingHorizontal: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 6,
+    justifyContent: 'center',
+    gap: 0,
     position: 'relative',
   },
   themeToggleDark: {
@@ -353,27 +392,34 @@ const styles = StyleSheet.create({
   themeToggleLight: {
     backgroundColor: '#bf0a30',
   },
-  themeIcon: {
-    fontSize: 12,
-    color: '#ffffff',
-    lineHeight: 12,
+  themeIconWrap: {
+    position: 'absolute',
+    top: 7,
+    width: 14,
+    height: 14,
+  },
+  themeIconLeft: {
+    left: 8,
+  },
+  themeIconRight: {
+    right: 8,
   },
   themeIconDim: {
     opacity: 0.5,
   },
   themeKnob: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     backgroundColor: '#ffffff',
     position: 'absolute',
-    top: 5,
+    top: 3,
   },
   themeKnobLeft: {
-    left: 6,
+    left: 3,
   },
   themeKnobRight: {
-    right: 6,
+    left: 27,
   },
   logoutBtn: {
     width: 28,
