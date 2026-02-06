@@ -1,4 +1,4 @@
-import { Animated, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Animated, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -77,7 +77,7 @@ export default function ChatsScreen({
   onRefresh: () => Promise<void>;
   onOpenChat: (chat: ChatItem) => void;
   onStartChat: (chat: ChatItem) => void;
-  theme: 'dark' | 'light';
+  theme: { mode: 'dark' | 'light' };
   onToggleTheme: () => void;
   onLogout: () => void;
 }) {
@@ -88,8 +88,10 @@ export default function ChatsScreen({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [showNewChat, setShowNewChat] = useState(false);
-  const isLight = theme === 'light';
+  const isLight = theme?.mode === 'light';
   const toggleX = useRef(new Animated.Value(isLight ? 0 : 24)).current;
+  const { height: windowHeight } = useWindowDimensions();
+  const [selectLayout, setSelectLayout] = useState<{ y: number; height: number } | null>(null);
   const colors = {
     bg: isLight ? '#f8fafc' : '#0b0b0b',
     headerBorder: isLight ? '#e2e8f0' : '#1f2937',
@@ -122,6 +124,13 @@ export default function ChatsScreen({
 
   const hasChats = chats.length > 0;
   const listItems = chats;
+  const maxOptionsHeight = useMemo(() => {
+    if (!selectLayout) return 320;
+    const composerReserve = 120;
+    const available = windowHeight - (selectLayout.y + selectLayout.height) - insets.bottom - composerReserve;
+    const clamped = Math.max(140, Math.min(392, Math.floor(available)));
+    return clamped;
+  }, [selectLayout, windowHeight, insets.bottom]);
 
   const handleStart = async () => {
     if (!text.trim() || sending) return;
@@ -215,6 +224,7 @@ export default function ChatsScreen({
           <Pressable
             style={[styles.select, { backgroundColor: colors.cardBg, borderColor: isLight ? '#c9c9c9' : colors.border }]}
             onPress={() => setPickerOpen((v) => !v)}
+            onLayout={(event) => setSelectLayout({ y: event.nativeEvent.layout.y, height: event.nativeEvent.layout.height })}
           >
             <Image source={avatarMap.get(persona) ?? trump} style={styles.selectAvatar} />
             <Text style={[styles.selectText, { color: isLight ? '#111' : colors.text }]}>{persona}</Text>
@@ -227,8 +237,13 @@ export default function ChatsScreen({
             />
           </Pressable>
           {pickerOpen ? (
-            <View style={[styles.selectList, { backgroundColor: colors.cardBg, borderColor: isLight ? '#c9c9c9' : colors.border }]}>
-              <ScrollView style={{ maxHeight: 392 }}>
+            <View
+              style={[
+                styles.selectList,
+                { backgroundColor: colors.cardBg, borderColor: isLight ? '#c9c9c9' : colors.border, maxHeight: maxOptionsHeight },
+              ]}
+            >
+              <ScrollView style={{ maxHeight: maxOptionsHeight }}>
                 {personas.map((p) => (
                   <Pressable
                     key={p.name}
@@ -377,6 +392,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 16,
+    paddingTop: 0,
     gap: 18,
   },
   emptyTitle: {

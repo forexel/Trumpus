@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
 import { makeRedirectUri } from 'expo-auth-session';
@@ -27,15 +27,20 @@ export default function LoginScreen({
   const [password, setPassword] = useState('');
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
-  const redirectUri = makeRedirectUri({ scheme: 'trumpus' });
+  const [formError, setFormError] = useState('');
+  const androidClientIdBase = GOOGLE_ANDROID_CLIENT_ID.replace('.apps.googleusercontent.com', '');
+  const androidRedirectUri = androidClientIdBase
+    ? makeRedirectUri({ native: `com.googleusercontent.apps.${androidClientIdBase}:/oauthredirect` })
+    : makeRedirectUri({ scheme: 'trumpus' });
+  const redirectUri = Platform.OS === 'android' ? androidRedirectUri : makeRedirectUri({ scheme: 'trumpus' });
   const [request, response, promptAsync] = Google.useAuthRequest({
     androidClientId: GOOGLE_ANDROID_CLIENT_ID,
+    webClientId: GOOGLE_WEB_CLIENT_ID,
     redirectUri,
   });
 
   useEffect(() => {
     if (!request?.url) return;
-    onGoogleStatus(`Google auth url: ${request.url}`);
   }, [request?.url]);
 
   useEffect(() => {
@@ -54,7 +59,6 @@ export default function LoginScreen({
             throw new Error(data?.error ?? `HTTP ${res.status}`);
           }
           await saveTokens(data);
-          onGoogleStatus(`Logged in: ${data?.email ?? 'ok'}`);
           onLogin();
         };
 
@@ -63,18 +67,17 @@ export default function LoginScreen({
           await retry();
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'unknown';
-          const isNetwork = msg.toLowerCase().includes('network') || msg.toLowerCase().includes('timeout');
-          if (isNetwork) {
-            onError('No internet connection', 'Check your internet connection and try again.', retry);
-          } else if (msg.toLowerCase().includes('503')) {
-            onError('Server on maintenance', 'Please try again in an hour later.', retry);
-          } else {
-            onError('Authentication error', msg, retry);
-          }
+          setFormError(msg || 'Authentication error');
+          setEmailError(' ');
+          setPasswordError(' ');
         }
       } else if (response?.type === 'error') {
         const details = response.params ? JSON.stringify(response.params) : 'no details';
-        onGoogleStatus(`Google auth error: ${response.error?.message ?? 'unknown'} | ${details}`);
+        const msg = response.error?.message ?? 'Google auth error';
+        onGoogleStatus('');
+        setFormError(msg);
+        setEmailError(' ');
+        setPasswordError(' ');
       }
     }
     handleGoogle();
@@ -105,6 +108,7 @@ export default function LoginScreen({
           onChangeText={setPassword}
         />
         <Text style={styles.errorText}>{passwordError || ' '}</Text>
+        <Text style={styles.formError}>{formError || ' '}</Text>
 
         <Pressable
           style={styles.primaryButton}
@@ -113,6 +117,7 @@ export default function LoginScreen({
             const nextPasswordError = password ? '' : 'Required';
             setEmailError(nextEmailError);
             setPasswordError(nextPasswordError);
+            setFormError('');
             if (nextEmailError || nextPasswordError) return;
 
             const retry = async () => {
@@ -132,8 +137,10 @@ export default function LoginScreen({
             try {
               await retry();
             } catch (err) {
-              const msg = err instanceof Error ? err.message : 'unknown';
-              onError('Authentication error', msg, retry);
+              const msg = err instanceof Error ? err.message : 'Invalid credentials';
+              setFormError(msg);
+              setEmailError(' ');
+              setPasswordError(' ');
             }
           }}
         >
@@ -149,7 +156,6 @@ export default function LoginScreen({
         <Pressable
           style={[styles.googleButton, !request && styles.googleButtonDisabled]}
           onPress={() => {
-            onGoogleStatus(`Google auth start: redirect=${redirectUri} androidClientId=${GOOGLE_ANDROID_CLIENT_ID}`);
             promptAsync({ useProxy: false });
           }}
           disabled={!request}
@@ -203,6 +209,13 @@ const styles = StyleSheet.create({
     color: '#bf0a30',
     marginTop: 5,
     marginBottom: 0,
+  },
+  formError: {
+    minHeight: 12,
+    fontSize: 12,
+    color: '#bf0a30',
+    marginTop: 2,
+    marginBottom: 4,
   },
   primaryButton: {
     marginTop: 10,

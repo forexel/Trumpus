@@ -72,10 +72,12 @@ export default function ChatsPage() {
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
   const [isOpen, setIsOpen] = useState(false)
+  const [optionsMaxHeight, setOptionsMaxHeight] = useState(392)
   const [swipeOffsets, setSwipeOffsets] = useState<Record<string, number>>({})
   const [swipingId, setSwipingId] = useState<string | null>(null)
   const [isSwiping, setIsSwiping] = useState(false)
   const swipeStartX = useRef(0)
+  const selectRef = useRef<HTMLDivElement | null>(null)
   const navigate = useNavigate()
   const { theme, toggleTheme } = useTheme()
   const clientId = getClientId()
@@ -130,6 +132,21 @@ export default function ChatsPage() {
   useEffect(() => {
     loadChats()
   }, [navigate])
+
+  useEffect(() => {
+    if (!isOpen) return
+    const update = () => {
+      const el = selectRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      const available = window.innerHeight - rect.bottom - 16
+      const next = Math.max(140, Math.min(392, Math.floor(available)))
+      setOptionsMaxHeight(next)
+    }
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [isOpen])
 
   const handleLogout = () => {
     localStorage.removeItem('client_token')
@@ -252,7 +269,7 @@ export default function ChatsPage() {
           <div className="empty-state">
             <div className="persona-select-block">
               <div className="persona-select-title">Start new chat with...</div>
-              <div className={`persona-select-list ${isOpen ? 'open' : ''}`}>
+              <div className={`persona-select-list ${isOpen ? 'open' : ''}`} ref={selectRef}>
                 <button className="persona-option selected" type="button" onClick={() => setIsOpen(prev => !prev)}>
                   <span className="persona-option-avatar">
                     {selectedPersona.avatar ? <img src={selectedPersona.avatar} alt={selectedPersona.name} /> : null}
@@ -261,7 +278,7 @@ export default function ChatsPage() {
                   <span className="persona-option-caret" aria-hidden="true" />
                 </button>
                 {isOpen ? (
-                  <div className="persona-options">
+                  <div className="persona-options" style={{ maxHeight: optionsMaxHeight }}>
                     {PERSONAS.filter(p => p.id !== selectedPersona.id).map(p => (
                       <button
                         key={p.id}

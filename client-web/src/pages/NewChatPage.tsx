@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createChat, getClientId, sendMessage } from '../lib/api'
 import { useTheme } from '../lib/useTheme'
@@ -110,10 +110,20 @@ export default function NewChatPage() {
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [isOpen, setIsOpen] = useState(false)
+  const [optionsMaxHeight, setOptionsMaxHeight] = useState(392)
+  const optionsRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
   const { theme, toggleTheme } = useTheme()
 
   const clientId = useMemo(() => getClientId(), [])
+
+  useLayoutEffect(() => {
+    if (!isOpen || !optionsRef.current) return
+    const rect = optionsRef.current.getBoundingClientRect()
+    const available = window.innerHeight - rect.top - 16
+    const clamped = Math.max(140, Math.min(392, Math.floor(available)))
+    setOptionsMaxHeight(clamped)
+  }, [isOpen])
 
   async function startChat(persona: Persona) {
     if (!clientId) return
@@ -201,7 +211,7 @@ export default function NewChatPage() {
               <span className="persona-option-caret" aria-hidden="true" />
             </button>
             {isOpen ? (
-              <div className="persona-options">
+              <div className="persona-options" ref={optionsRef} style={{ maxHeight: optionsMaxHeight }}>
                 {PERSONAS.filter(p => p.id !== selectedPersona.id).map(p => (
                   <button
                     key={p.id}
