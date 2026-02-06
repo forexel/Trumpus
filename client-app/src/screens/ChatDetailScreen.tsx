@@ -80,6 +80,7 @@ export default function ChatDetailScreen({
   const [text, setText] = useState('');
   const [typing, setTyping] = useState(false);
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollRef = useRef<ScrollView | null>(null);
 
@@ -219,49 +220,55 @@ export default function ChatDetailScreen({
         ) : null}
       </ScrollView>
 
-      <View
-        style={[
-          styles.composer,
-          {
-            borderTopColor: colors.headerBorder,
-            backgroundColor: colors.bg,
-            paddingBottom: Math.max(insets.bottom, 4),
-          },
-        ]}
-      >
-        <TextInput
-          style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
-          placeholder="Type a message..."
-          placeholderTextColor="#9ca3af"
-          value={text}
-          onChangeText={setText}
-          editable={!sending}
-        />
-        <Pressable
-          style={[styles.send, typing ? styles.sendStop : null]}
-          onPress={async () => {
-            if (typing) {
-              setTyping(false);
-              if (pollRef.current) clearInterval(pollRef.current);
-              return;
-            }
-            if (!text.trim() || sending) return;
-            setSending(true);
-            try {
-              const msg = await sendMessage(chat.id, text.trim(), chat.persona);
-              setMessages((prev) => [...prev, msg]);
-              setText('');
-              setTyping(true);
-              startPolling(msg.created_at);
-            } finally {
-              setSending(false);
-            }
-          }}
-          disabled={sending}
+        <View
+          style={[
+            styles.composer,
+            {
+              borderTopColor: colors.headerBorder,
+              backgroundColor: colors.bg,
+              paddingBottom: Math.max(insets.bottom, 4),
+            },
+          ]}
         >
-          {typing ? <View style={styles.stopIcon} /> : <Image source={eagle} style={styles.sendIcon} />}
-        </Pressable>
-      </View>
+          <TextInput
+            style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
+            placeholder="Type a message..."
+            placeholderTextColor="#9ca3af"
+            value={text}
+            onChangeText={setText}
+            editable={!sending}
+          />
+          <Pressable
+            style={[styles.send, typing ? styles.sendStop : null]}
+            onPress={async () => {
+              if (typing) {
+                setTyping(false);
+                if (pollRef.current) clearInterval(pollRef.current);
+                return;
+              }
+              if (!text.trim() || sending) return;
+              setSendError('');
+              setSending(true);
+              setTyping(true);
+              try {
+                const msg = await sendMessage(chat.id, text.trim(), chat.persona);
+                setMessages((prev) => [...prev, msg]);
+                setText('');
+                startPolling(msg.created_at);
+              } catch (err) {
+                setTyping(false);
+                const msg = err instanceof Error ? err.message : 'Failed to send message';
+                setSendError(msg);
+              } finally {
+                setSending(false);
+              }
+            }}
+            disabled={sending}
+          >
+            {typing ? <View style={styles.stopIcon} /> : <Image source={eagle} style={styles.sendIcon} />}
+          </Pressable>
+        </View>
+        {sendError ? <Text style={styles.sendError}>{sendError}</Text> : null}
     </KeyboardAvoidingView>
   );
 }
@@ -381,6 +388,12 @@ const styles = StyleSheet.create({
     height: 14,
     backgroundColor: '#ffffff',
     borderRadius: 2,
+  },
+  sendError: {
+    color: '#f87171',
+    fontSize: 12,
+    textAlign: 'center',
+    paddingBottom: 8,
   },
   headerActions: {
     flexDirection: 'row',
