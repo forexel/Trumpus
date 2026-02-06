@@ -57,7 +57,7 @@ html, body {
   flex-direction: column;
   align-items: center;
   gap: 16px;
-  margin-top: -64px;
+  margin-top: -84px;
 }
 
 .auth-brand {
@@ -151,16 +151,22 @@ html, body {
 
 .auth-card input.input-error {
   border-color: #bf0a30;
+  background: #ffffff !important;
+  color: #1a1a1a !important;
   box-shadow: 0 0 0 2px rgba(191, 10, 48, 0.12);
 }
 
 .field-error {
   min-height: 6px;
   margin-top: 5px;
-  margin-bottom: 2px;
+  margin-bottom: 0;
   font-size: 11px;
   color: #bf0a30;
   line-height: 6px;
+}
+
+.field-error + label {
+  margin-top: 4px;
 }
 
 .auth-card input::placeholder {

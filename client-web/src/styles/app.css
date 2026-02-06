@@ -1008,14 +1008,16 @@ input:not(.composer-bottom input):focus {
 
 /* Auth inputs should stay white regardless of theme */
 .auth-card input {
-  background: #ffffff;
-  color: #1a1a1a;
+  background: #ffffff !important;
+  color: #1a1a1a !important;
   border-color: #002868;
 }
 
 .auth-card input:focus {
   border-color: #BF0A30;
   box-shadow: 0 0 0 4px rgba(191, 10, 48, 0.2);
+  background: #ffffff !important;
+  color: #1a1a1a !important;
 }
 
 button:not(.back-btn):not(.logout-btn):not(.send-btn):not(.primary-btn):not(.theme-toggle):not(.persona-option) { 

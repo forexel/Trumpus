@@ -56,10 +56,12 @@ export default function ChatsScreen({
   const colors = {
     bg: isLight ? '#f8fafc' : '#0b0b0b',
     headerBorder: isLight ? '#e2e8f0' : '#1f2937',
-    cardBg: isLight ? '#ffffff' : '#111214',
-    cardBorder: isLight ? '#e2e8f0' : '#1f2937',
+    cardBg: isLight ? '#ffffff' : '#0b0b0b',
+    cardHover: isLight ? '#f5f5f5' : '#111214',
+    border: isLight ? '#e2e8f0' : '#1f2937',
     text: isLight ? '#0f172a' : '#ffffff',
     subtext: isLight ? '#64748b' : '#94a3b8',
+    muted: isLight ? '#9ca3af' : '#6b7280',
     inputBg: isLight ? '#ffffff' : '#1f1f1f',
     inputBorder: isLight ? '#cbd5e1' : '#30343a',
   };
@@ -95,7 +97,16 @@ export default function ChatsScreen({
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.bg, paddingBottom: insets.bottom || 12 }]}>
-      <View style={[styles.header, { borderBottomColor: colors.headerBorder }]}>
+      <View
+        style={[
+          styles.header,
+          {
+            borderBottomColor: colors.headerBorder,
+            paddingTop: insets.top || 0,
+            height: 56 + (insets.top || 0),
+          },
+        ]}
+      >
         <Text style={[styles.headerBrand, { color: colors.text }]}>Trumpus</Text>
         <View style={styles.headerActions}>
           <Pressable style={[styles.themeToggle, isLight ? styles.themeToggleLight : styles.themeToggleDark]} onPress={onToggleTheme}>
@@ -115,18 +126,24 @@ export default function ChatsScreen({
             return (
               <Pressable
                 key={chat.id}
-                style={[styles.row, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]}
+                style={[styles.row, { borderBottomColor: colors.border }]}
                 onPress={() => onOpenChat(chat)}
               >
-                <Image source={avatar} style={styles.avatar} />
-                <View style={styles.rowText}>
-                  <View style={styles.rowTop}>
-                    <Text style={[styles.rowName, { color: colors.text }]}>{chat.title || chat.persona}</Text>
-                    <Text style={[styles.rowTime, { color: colors.subtext }]}>
-                      {chat.last_message_at ? new Date(chat.last_message_at).toLocaleTimeString().slice(0, 5) : ''}
+                <View style={[styles.rowInner, { backgroundColor: colors.cardBg }]}>
+                  <Image source={avatar} style={styles.avatar} />
+                  <View style={styles.rowText}>
+                    <View style={styles.rowTop}>
+                      <Text style={[styles.rowName, { color: colors.text }]} numberOfLines={1}>
+                        {chat.title || chat.persona}
+                      </Text>
+                      <Text style={[styles.rowTime, { color: colors.subtext }]}>
+                        {chat.last_message_at ? new Date(chat.last_message_at).toLocaleTimeString().slice(0, 5) : ''}
+                      </Text>
+                    </View>
+                    <Text style={[styles.rowPreview, { color: colors.subtext }]} numberOfLines={1}>
+                      Tap to start chatting
                     </Text>
                   </View>
-                  <Text style={[styles.rowPreview, { color: colors.subtext }]}>Tap to start chatting</Text>
                 </View>
               </Pressable>
             );
@@ -136,22 +153,22 @@ export default function ChatsScreen({
         <View style={styles.emptyWrap}>
           <Text style={[styles.emptyTitle, { color: colors.text }]}>Start new chat with...</Text>
           <Pressable
-            style={[styles.select, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]}
+            style={[styles.select, { backgroundColor: colors.cardBg, borderColor: isLight ? '#c9c9c9' : colors.border }]}
             onPress={() => setPickerOpen((v) => !v)}
           >
             <Image source={avatarMap.get(persona) ?? trump} style={styles.selectAvatar} />
-            <Text style={[styles.selectText, { color: colors.text }]}>{persona}</Text>
+            <Text style={[styles.selectText, { color: isLight ? '#111' : colors.text }]}>{persona}</Text>
             <View
               style={[
                 styles.chevron,
                 pickerOpen ? styles.chevronOpen : null,
-                { borderColor: colors.subtext },
+                { borderColor: isLight ? '#bdbdbd' : colors.subtext },
               ]}
             />
           </Pressable>
           {pickerOpen ? (
-            <View style={[styles.selectList, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]}>
-              <ScrollView style={{ maxHeight: 320 }}>
+            <View style={[styles.selectList, { backgroundColor: colors.cardBg, borderColor: isLight ? '#c9c9c9' : colors.border }]}>
+              <ScrollView style={{ maxHeight: 392 }}>
                 {personas.map((p) => (
                   <Pressable
                     key={p.name}
@@ -161,8 +178,11 @@ export default function ChatsScreen({
                       setPickerOpen(false);
                     }}
                   >
-                    <Image source={p.avatar} style={styles.selectAvatar} />
-                    <Text style={[styles.selectItemText, { color: colors.text }]}>{p.name}</Text>
+                    <View style={[styles.selectAvatarWrap, { borderColor: isLight ? '#bdbdbd' : colors.border }]}>
+                      <Image source={p.avatar} style={styles.selectAvatarImage} />
+                    </View>
+                    <Text style={[styles.selectItemText, { color: isLight ? '#111' : colors.text }]}>{p.name}</Text>
+                    <View style={[styles.selectCaret, { borderColor: isLight ? '#bdbdbd' : colors.subtext }]} />
                   </Pressable>
                 ))}
               </ScrollView>
@@ -176,7 +196,7 @@ export default function ChatsScreen({
           <TextInput
             style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
             placeholder="Type a message..."
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.muted}
             value={text}
             onChangeText={setText}
           />
@@ -259,28 +279,24 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   listWrap: {
-    padding: 12,
-    gap: 10,
+    paddingVertical: 8,
   },
   emptyWrap: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 16,
-    gap: 14,
+    gap: 18,
   },
   emptyTitle: {
-    color: '#e2e8f0',
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '400',
   },
   select: {
     width: '100%',
-    maxWidth: 320,
-    backgroundColor: '#111214',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#1f2937',
+    maxWidth: 360,
+    borderRadius: 18,
+    borderWidth: 2,
     paddingVertical: 10,
     paddingHorizontal: 12,
     flexDirection: 'row',
@@ -288,13 +304,13 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   selectAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
   },
   selectText: {
-    color: '#ffffff',
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '500',
     flex: 1,
   },
   chevron: {
@@ -302,7 +318,6 @@ const styles = StyleSheet.create({
     height: 10,
     borderRightWidth: 2,
     borderBottomWidth: 2,
-    borderColor: '#94a3b8',
     transform: [{ rotate: '45deg' }],
   },
   chevronOpen: {
@@ -310,39 +325,62 @@ const styles = StyleSheet.create({
   },
   selectList: {
     width: '100%',
-    maxWidth: 320,
-    backgroundColor: '#111214',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#1f2937',
-    paddingVertical: 8,
+    maxWidth: 360,
+    borderRadius: 18,
+    borderWidth: 2,
+    paddingVertical: 0,
+    marginTop: -2,
   },
   selectItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+  },
+  selectAvatarWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 2,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectAvatarImage: {
+    width: '100%',
+    height: '100%',
   },
   selectItemText: {
-    color: '#e2e8f0',
-    fontSize: 14,
+    fontSize: 17,
+    fontWeight: '500',
+    flex: 1,
+  },
+  selectCaret: {
+    width: 10,
+    height: 10,
+    borderRightWidth: 2,
+    borderBottomWidth: 2,
+    transform: [{ rotate: '45deg' }],
   },
   row: {
+    borderWidth: 1,
+    borderLeftWidth: 0,
+    borderRightWidth: 0,
+    borderTopWidth: 0,
+  },
+  rowInner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    borderRadius: 16,
+    width: '100%',
     paddingVertical: 12,
-    paddingHorizontal: 12,
-    backgroundColor: '#111214',
-    borderWidth: 1,
-    borderColor: '#1f2937',
+    paddingHorizontal: 16,
   },
   avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
   },
   rowText: {
     flex: 1,
@@ -353,42 +391,39 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   rowName: {
-    color: '#ffffff',
     fontWeight: '700',
+    fontSize: 16,
   },
   rowTime: {
-    color: '#94a3b8',
     fontSize: 12,
+    minWidth: 48,
+    textAlign: 'right',
   },
   rowPreview: {
-    color: '#94a3b8',
     marginTop: 4,
-    fontSize: 13,
+    fontSize: 14,
   },
   composer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderTopWidth: 1,
     borderTopColor: '#1f2937',
     backgroundColor: '#0b0b0b',
   },
   input: {
     flex: 1,
-    backgroundColor: '#1f1f1f',
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    color: '#ffffff',
+    borderRadius: 24,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
     borderWidth: 1,
-    borderColor: '#30343a',
   },
   send: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: '#bf0a30',
     alignItems: 'center',
     justifyContent: 'center',

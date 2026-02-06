@@ -33,7 +33,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     alignItems: 'center',
     gap: 12,
-    marginTop: -40,
+    marginTop: -60,
   },
   eagle: {
     width: 80,

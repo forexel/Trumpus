@@ -102,8 +102,17 @@ export default function ChatDetailScreen({
 
   return (
     <View style={[styles.screen, { paddingBottom: insets.bottom || 12, backgroundColor: colors.bg }]}>
-      <View style={[styles.header, { borderBottomColor: colors.headerBorder }]}>
-        <Pressable style={styles.back} onPress={onBack} />
+      <View
+        style={[
+          styles.header,
+          {
+            borderBottomColor: colors.headerBorder,
+            paddingTop: insets.top || 0,
+            height: 56 + (insets.top || 0),
+          },
+        ]}
+      >
+        <Pressable style={[styles.back, { borderColor: isLight ? '#0f172a' : '#9ca3af' }]} onPress={onBack} />
         <Text style={styles.flag}>🇺🇸</Text>
         <Image source={headerAvatar} style={styles.avatar} />
         <View style={styles.headerInfo}>
@@ -132,7 +141,10 @@ export default function ChatDetailScreen({
             style={[
               styles.bubble,
               m.sender === 'client' ? styles.userBubble : styles.aiBubble,
-              { backgroundColor: m.sender === 'client' ? colors.userBubble : colors.aiBubble },
+              {
+                backgroundColor: m.sender === 'client' ? colors.userBubble : colors.aiBubble,
+                borderColor: colors.headerBorder,
+              },
             ]}
           >
             <Text style={styles.bubbleText}>{m.content}</Text>
@@ -142,7 +154,13 @@ export default function ChatDetailScreen({
           </View>
         ))}
         {typing ? (
-          <View style={[styles.bubble, styles.aiBubble, { backgroundColor: colors.aiBubble }]}>
+          <View
+            style={[
+              styles.bubble,
+              styles.aiBubble,
+              { backgroundColor: colors.aiBubble, borderColor: colors.headerBorder },
+            ]}
+          >
             <View style={styles.typingDots}>
               <View style={styles.dot} />
               <View style={styles.dot} />
@@ -195,8 +213,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    height: 60,
-    paddingHorizontal: 12,
+    height: 56,
+    paddingHorizontal: 16,
     borderBottomWidth: 1,
     flexDirection: 'row',
     alignItems: 'center',
@@ -235,15 +253,19 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   bubble: {
-    maxWidth: '78%',
-    borderRadius: 14,
-    padding: 12,
+    maxWidth: '85%',
+    borderRadius: 18,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
   },
   aiBubble: {
     alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderBottomLeftRadius: 6,
   },
   userBubble: {
     alignSelf: 'flex-end',
+    borderBottomRightRadius: 6,
   },
   bubbleText: {
     color: '#ffffff',
@@ -251,19 +273,19 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   bubbleTime: {
-    marginTop: 6,
+    marginTop: 4,
     color: 'rgba(255,255,255,0.7)',
     fontSize: 11,
     alignSelf: 'flex-end',
   },
   typingDots: {
     flexDirection: 'row',
-    gap: 6,
+    gap: 4,
   },
   dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: '#e2e8f0',
     opacity: 0.8,
   },
@@ -271,21 +293,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderTopWidth: 1,
   },
   input: {
     flex: 1,
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    borderRadius: 24,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
     borderWidth: 1,
   },
   send: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: '#bf0a30',
     alignItems: 'center',
     justifyContent: 'center',
