@@ -135,8 +135,14 @@ export default function ChatDetailScreen({
     inputBorder: isLight ? '#cbd5e1' : '#30343a',
   };
 
+  const headerOffset = 56 + (insets.top || 0);
+
   return (
-    <View style={[styles.screen, { paddingBottom: insets.bottom || 12, backgroundColor: colors.bg }]}>
+    <KeyboardAvoidingView
+      style={[styles.screen, { backgroundColor: colors.bg }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : headerOffset}
+    >
       <View
         style={[
           styles.header,
@@ -175,6 +181,7 @@ export default function ChatDetailScreen({
         ref={scrollRef}
         contentContainerStyle={styles.messages}
         onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
+        keyboardShouldPersistTaps="handled"
       >
         {messages.map((m) => (
           <View
@@ -211,46 +218,50 @@ export default function ChatDetailScreen({
         ) : null}
       </ScrollView>
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : 0}
+      <View
+        style={[
+          styles.composer,
+          {
+            borderTopColor: colors.headerBorder,
+            backgroundColor: colors.bg,
+            paddingBottom: Math.max(insets.bottom, 4),
+          },
+        ]}
       >
-        <View style={[styles.composer, { borderTopColor: colors.headerBorder, backgroundColor: colors.bg }]}>
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
-            placeholder="Type a message..."
-            placeholderTextColor="#9ca3af"
-            value={text}
-            onChangeText={setText}
-            editable={!sending}
-          />
-          <Pressable
-            style={[styles.send, typing ? styles.sendStop : null]}
-            onPress={async () => {
-              if (typing) {
-                setTyping(false);
-                if (pollRef.current) clearInterval(pollRef.current);
-                return;
-              }
-              if (!text.trim() || sending) return;
-              setSending(true);
-              try {
-                const msg = await sendMessage(chat.id, text.trim(), chat.persona);
-                setMessages((prev) => [...prev, msg]);
-                setText('');
-                setTyping(true);
-                startPolling(msg.created_at);
-              } finally {
-                setSending(false);
-              }
-            }}
-            disabled={sending}
-          >
-            {typing ? <View style={styles.stopIcon} /> : <Image source={eagle} style={styles.sendIcon} />}
-          </Pressable>
-        </View>
-      </KeyboardAvoidingView>
-    </View>
+        <TextInput
+          style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
+          placeholder="Type a message..."
+          placeholderTextColor="#9ca3af"
+          value={text}
+          onChangeText={setText}
+          editable={!sending}
+        />
+        <Pressable
+          style={[styles.send, typing ? styles.sendStop : null]}
+          onPress={async () => {
+            if (typing) {
+              setTyping(false);
+              if (pollRef.current) clearInterval(pollRef.current);
+              return;
+            }
+            if (!text.trim() || sending) return;
+            setSending(true);
+            try {
+              const msg = await sendMessage(chat.id, text.trim(), chat.persona);
+              setMessages((prev) => [...prev, msg]);
+              setText('');
+              setTyping(true);
+              startPolling(msg.created_at);
+            } finally {
+              setSending(false);
+            }
+          }}
+          disabled={sending}
+        >
+          {typing ? <View style={styles.stopIcon} /> : <Image source={eagle} style={styles.sendIcon} />}
+        </Pressable>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 

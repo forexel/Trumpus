@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import { Image, ImageBackground, KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
+import { Image, ImageBackground, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const bg = require('../../assets/auth-bg.png');
@@ -7,23 +7,26 @@ const eagle = require('../../assets/eagle.png');
 
 export default function AuthLayout({ children, title }: { children: ReactNode; title: string }) {
   const insets = useSafeAreaInsets();
-  const topOffset = Math.max(insets.top + 20, 72);
+  const topOffset = Math.max(insets.top, 52);
   return (
     <ImageBackground source={bg} style={styles.screen} resizeMode="cover">
       <View style={styles.overlay} />
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : 0}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'position'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : Math.max(insets.top, 24)}
         style={styles.keyboard}
       >
-        <View style={[styles.content, { paddingTop: topOffset }]}>
+        <ScrollView
+          contentContainerStyle={[styles.content, { paddingTop: topOffset, paddingBottom: insets.bottom + 24 }]}
+          keyboardShouldPersistTaps="handled"
+        >
           <Image source={eagle} style={styles.eagle} />
           <Text style={styles.brand}>Trumpus</Text>
           <View style={styles.card}>
             <Text style={styles.cardTitle}>{title}</Text>
             {children}
           </View>
-        </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </ImageBackground>
   );
@@ -46,6 +49,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     paddingBottom: 24,
+    flexGrow: 1,
   },
   eagle: {
     width: 80,
