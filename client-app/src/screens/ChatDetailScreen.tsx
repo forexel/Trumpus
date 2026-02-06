@@ -1,4 +1,4 @@
-import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import eagle from '../../assets/eagle.png';
@@ -113,19 +113,21 @@ export default function ChatDetailScreen({
         ]}
       >
         <Pressable style={[styles.back, { borderColor: isLight ? '#0f172a' : '#9ca3af' }]} onPress={onBack} />
-        <Text style={styles.flag}>🇺🇸</Text>
         <Image source={headerAvatar} style={styles.avatar} />
         <View style={styles.headerInfo}>
-          <Text style={[styles.headerName, { color: colors.text }]}>{chat.title || chat.persona}</Text>
+          <Text style={[styles.headerName, { color: colors.text }]} numberOfLines={1}>
+            {chat.title || chat.persona}
+          </Text>
           <Text style={styles.headerStatus}>online</Text>
         </View>
         <View style={styles.headerActions}>
           <Pressable style={[styles.themeToggle, isLight ? styles.themeToggleLight : styles.themeToggleDark]} onPress={onToggleTheme}>
-            <View style={[styles.themeKnob, isLight ? styles.themeKnobLight : styles.themeKnobDark]} />
-            <Text style={styles.themeLabel}>{isLight ? 'Light' : 'Dark'}</Text>
+            <Text style={[styles.themeIcon, isLight ? styles.themeIconDim : null]}>☾</Text>
+            <Text style={[styles.themeIcon, !isLight ? styles.themeIconDim : null]}>☀</Text>
+            <View style={[styles.themeKnob, isLight ? styles.themeKnobLeft : styles.themeKnobRight]} />
           </Pressable>
           <Pressable style={styles.logoutBtn} onPress={onLogout}>
-            <Text style={styles.logoutText}>Exit</Text>
+            <Text style={styles.logoutIcon}>⎋</Text>
           </Pressable>
         </View>
       </View>
@@ -170,40 +172,45 @@ export default function ChatDetailScreen({
         ) : null}
       </ScrollView>
 
-      <View style={[styles.composer, { borderTopColor: colors.headerBorder, backgroundColor: colors.bg }]}>
-        <TextInput
-          style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
-          placeholder="Type a message..."
-          placeholderTextColor="#9ca3af"
-          value={text}
-          onChangeText={setText}
-          editable={!sending}
-        />
-        <Pressable
-          style={[styles.send, typing ? styles.sendStop : null]}
-          onPress={async () => {
-            if (typing) {
-              setTyping(false);
-              if (pollRef.current) clearInterval(pollRef.current);
-              return;
-            }
-            if (!text.trim() || sending) return;
-            setSending(true);
-            try {
-              const msg = await sendMessage(chat.id, text.trim(), chat.persona);
-              setMessages((prev) => [...prev, msg]);
-              setText('');
-              setTyping(true);
-              startPolling(msg.created_at);
-            } finally {
-              setSending(false);
-            }
-          }}
-          disabled={sending}
-        >
-          {typing ? <View style={styles.stopIcon} /> : <Image source={eagle} style={styles.sendIcon} />}
-        </Pressable>
-      </View>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : 0}
+      >
+        <View style={[styles.composer, { borderTopColor: colors.headerBorder, backgroundColor: colors.bg }]}>
+          <TextInput
+            style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
+            placeholder="Type a message..."
+            placeholderTextColor="#9ca3af"
+            value={text}
+            onChangeText={setText}
+            editable={!sending}
+          />
+          <Pressable
+            style={[styles.send, typing ? styles.sendStop : null]}
+            onPress={async () => {
+              if (typing) {
+                setTyping(false);
+                if (pollRef.current) clearInterval(pollRef.current);
+                return;
+              }
+              if (!text.trim() || sending) return;
+              setSending(true);
+              try {
+                const msg = await sendMessage(chat.id, text.trim(), chat.persona);
+                setMessages((prev) => [...prev, msg]);
+                setText('');
+                setTyping(true);
+                startPolling(msg.created_at);
+              } finally {
+                setSending(false);
+              }
+            }}
+            disabled={sending}
+          >
+            {typing ? <View style={styles.stopIcon} /> : <Image source={eagle} style={styles.sendIcon} />}
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
     </View>
   );
 }
@@ -229,9 +236,6 @@ const styles = StyleSheet.create({
     transform: [{ rotate: '45deg' }],
     marginRight: 4,
   },
-  flag: {
-    fontSize: 18,
-  },
   avatar: {
     width: 34,
     height: 34,
@@ -242,6 +246,7 @@ const styles = StyleSheet.create({
   },
   headerName: {
     fontWeight: '700',
+    flexShrink: 1,
   },
   headerStatus: {
     color: '#22c55e',
@@ -333,12 +338,14 @@ const styles = StyleSheet.create({
   },
   themeToggle: {
     height: 28,
-    minWidth: 70,
+    minWidth: 86,
     borderRadius: 999,
     paddingHorizontal: 8,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 6,
+    position: 'relative',
   },
   themeToggleDark: {
     backgroundColor: '#3f0a1a',
@@ -346,34 +353,39 @@ const styles = StyleSheet.create({
   themeToggleLight: {
     backgroundColor: '#bf0a30',
   },
+  themeIcon: {
+    fontSize: 12,
+    color: '#ffffff',
+  },
+  themeIconDim: {
+    opacity: 0.5,
+  },
   themeKnob: {
     width: 18,
     height: 18,
     borderRadius: 9,
-  },
-  themeKnobDark: {
     backgroundColor: '#ffffff',
-    alignSelf: 'flex-end',
+    position: 'absolute',
+    top: 5,
   },
-  themeKnobLight: {
-    backgroundColor: '#ffffff',
-    alignSelf: 'flex-start',
+  themeKnobLeft: {
+    left: 6,
   },
-  themeLabel: {
-    color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '600',
+  themeKnobRight: {
+    right: 6,
   },
   logoutBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
+    width: 28,
+    height: 28,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#374151',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  logoutText: {
+  logoutIcon: {
     color: '#e2e8f0',
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });
