@@ -33,12 +33,18 @@ export default function ChatsScreen({
   onRefresh,
   onOpenChat,
   onStartChat,
+  theme,
+  onToggleTheme,
+  onLogout,
 }: {
   chats: ChatItem[];
   loading: boolean;
   onRefresh: () => Promise<void>;
   onOpenChat: (chat: ChatItem) => void;
   onStartChat: (chat: ChatItem) => void;
+  theme: 'dark' | 'light';
+  onToggleTheme: () => void;
+  onLogout: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -46,6 +52,17 @@ export default function ChatsScreen({
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const isLight = theme === 'light';
+  const colors = {
+    bg: isLight ? '#f8fafc' : '#0b0b0b',
+    headerBorder: isLight ? '#e2e8f0' : '#1f2937',
+    cardBg: isLight ? '#ffffff' : '#111214',
+    cardBorder: isLight ? '#e2e8f0' : '#1f2937',
+    text: isLight ? '#0f172a' : '#ffffff',
+    subtext: isLight ? '#64748b' : '#94a3b8',
+    inputBg: isLight ? '#ffffff' : '#1f1f1f',
+    inputBorder: isLight ? '#cbd5e1' : '#30343a',
+  };
 
   const avatarMap = useMemo(() => {
     const map = new Map<string, number>();
@@ -77,9 +94,18 @@ export default function ChatsScreen({
   };
 
   return (
-    <View style={[styles.screen, { paddingBottom: insets.bottom || 12 }]}>
-      <View style={styles.header}>
-        <Text style={styles.headerBrand}>Trumpus</Text>
+    <View style={[styles.screen, { backgroundColor: colors.bg, paddingBottom: insets.bottom || 12 }]}>
+      <View style={[styles.header, { borderBottomColor: colors.headerBorder }]}>
+        <Text style={[styles.headerBrand, { color: colors.text }]}>Trumpus</Text>
+        <View style={styles.headerActions}>
+          <Pressable style={[styles.themeToggle, isLight ? styles.themeToggleLight : styles.themeToggleDark]} onPress={onToggleTheme}>
+            <View style={[styles.themeKnob, isLight ? styles.themeKnobLight : styles.themeKnobDark]} />
+            <Text style={styles.themeLabel}>{isLight ? 'Light' : 'Dark'}</Text>
+          </Pressable>
+          <Pressable style={styles.logoutBtn} onPress={onLogout}>
+            <Text style={styles.logoutText}>Exit</Text>
+          </Pressable>
+        </View>
       </View>
 
       {hasChats ? (
@@ -87,14 +113,20 @@ export default function ChatsScreen({
           {listItems.map((chat) => {
             const avatar = avatarMap.get(chat.persona) ?? trump;
             return (
-              <Pressable key={chat.id} style={styles.row} onPress={() => onOpenChat(chat)}>
+              <Pressable
+                key={chat.id}
+                style={[styles.row, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]}
+                onPress={() => onOpenChat(chat)}
+              >
                 <Image source={avatar} style={styles.avatar} />
                 <View style={styles.rowText}>
                   <View style={styles.rowTop}>
-                    <Text style={styles.rowName}>{chat.title || chat.persona}</Text>
-                    <Text style={styles.rowTime}>{chat.last_message_at ? new Date(chat.last_message_at).toLocaleTimeString().slice(0, 5) : ''}</Text>
+                    <Text style={[styles.rowName, { color: colors.text }]}>{chat.title || chat.persona}</Text>
+                    <Text style={[styles.rowTime, { color: colors.subtext }]}>
+                      {chat.last_message_at ? new Date(chat.last_message_at).toLocaleTimeString().slice(0, 5) : ''}
+                    </Text>
                   </View>
-                  <Text style={styles.rowPreview}>Tap to start chatting</Text>
+                  <Text style={[styles.rowPreview, { color: colors.subtext }]}>Tap to start chatting</Text>
                 </View>
               </Pressable>
             );
@@ -102,14 +134,23 @@ export default function ChatsScreen({
         </ScrollView>
       ) : (
         <View style={styles.emptyWrap}>
-          <Text style={styles.emptyTitle}>Start new chat with...</Text>
-          <Pressable style={styles.select} onPress={() => setPickerOpen((v) => !v)}>
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>Start new chat with...</Text>
+          <Pressable
+            style={[styles.select, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]}
+            onPress={() => setPickerOpen((v) => !v)}
+          >
             <Image source={avatarMap.get(persona) ?? trump} style={styles.selectAvatar} />
-            <Text style={styles.selectText}>{persona}</Text>
-            <View style={[styles.chevron, pickerOpen ? styles.chevronOpen : null]} />
+            <Text style={[styles.selectText, { color: colors.text }]}>{persona}</Text>
+            <View
+              style={[
+                styles.chevron,
+                pickerOpen ? styles.chevronOpen : null,
+                { borderColor: colors.subtext },
+              ]}
+            />
           </Pressable>
           {pickerOpen ? (
-            <View style={styles.selectList}>
+            <View style={[styles.selectList, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]}>
               <ScrollView style={{ maxHeight: 320 }}>
                 {personas.map((p) => (
                   <Pressable
@@ -121,7 +162,7 @@ export default function ChatsScreen({
                     }}
                   >
                     <Image source={p.avatar} style={styles.selectAvatar} />
-                    <Text style={styles.selectItemText}>{p.name}</Text>
+                    <Text style={[styles.selectItemText, { color: colors.text }]}>{p.name}</Text>
                   </Pressable>
                 ))}
               </ScrollView>
@@ -131,9 +172,9 @@ export default function ChatsScreen({
       )}
 
       {!hasChats ? (
-        <View style={styles.composer}>
+        <View style={[styles.composer, { borderTopColor: colors.headerBorder, backgroundColor: colors.bg }]}>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
             placeholder="Type a message..."
             placeholderTextColor="#9ca3af"
             value={text}
@@ -159,13 +200,63 @@ const styles = StyleSheet.create({
     height: 56,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#1f2937',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexDirection: 'row',
   },
   headerBrand: {
-    color: '#ffffff',
     fontSize: 20,
     fontWeight: '700',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  themeToggle: {
+    height: 28,
+    minWidth: 70,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  themeToggleDark: {
+    backgroundColor: '#3f0a1a',
+  },
+  themeToggleLight: {
+    backgroundColor: '#bf0a30',
+  },
+  themeKnob: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+  },
+  themeKnobDark: {
+    backgroundColor: '#ffffff',
+    alignSelf: 'flex-end',
+  },
+  themeKnobLight: {
+    backgroundColor: '#ffffff',
+    alignSelf: 'flex-start',
+  },
+  themeLabel: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  logoutBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#374151',
+  },
+  logoutText: {
+    color: '#e2e8f0',
+    fontSize: 12,
+    fontWeight: '600',
   },
   listWrap: {
     padding: 12,
