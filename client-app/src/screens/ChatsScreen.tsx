@@ -28,26 +28,26 @@ const personas = [
   { name: 'Jeffrey Epstein', avatar: epstein },
 ];
 
-function MoonIcon() {
+function MoonIcon({ color }: { color: string }) {
   return (
     <Svg width={14} height={14} viewBox="0 0 24 24" fill="none">
-      <Path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );
 }
 
-function SunIcon() {
+function SunIcon({ color }: { color: string }) {
   return (
     <Svg width={14} height={14} viewBox="0 0 24 24" fill="none">
-      <Circle cx="12" cy="12" r="4" stroke="#ffffff" strokeWidth={2} />
-      <Line x1="12" y1="1" x2="12" y2="3" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
-      <Line x1="12" y1="21" x2="12" y2="23" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
-      <Line x1="4.22" y1="4.22" x2="5.64" y2="5.64" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
-      <Line x1="18.36" y1="18.36" x2="19.78" y2="19.78" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
-      <Line x1="1" y1="12" x2="3" y2="12" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
-      <Line x1="21" y1="12" x2="23" y2="12" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
-      <Line x1="4.22" y1="19.78" x2="5.64" y2="18.36" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
-      <Line x1="18.36" y1="5.64" x2="19.78" y2="4.22" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
+      <Circle cx="12" cy="12" r="4" stroke={color} strokeWidth={2} />
+      <Line x1="12" y1="1" x2="12" y2="3" stroke={color} strokeWidth={2} strokeLinecap="round" />
+      <Line x1="12" y1="21" x2="12" y2="23" stroke={color} strokeWidth={2} strokeLinecap="round" />
+      <Line x1="4.22" y1="4.22" x2="5.64" y2="5.64" stroke={color} strokeWidth={2} strokeLinecap="round" />
+      <Line x1="18.36" y1="18.36" x2="19.78" y2="19.78" stroke={color} strokeWidth={2} strokeLinecap="round" />
+      <Line x1="1" y1="12" x2="3" y2="12" stroke={color} strokeWidth={2} strokeLinecap="round" />
+      <Line x1="21" y1="12" x2="23" y2="12" stroke={color} strokeWidth={2} strokeLinecap="round" />
+      <Line x1="4.22" y1="19.78" x2="5.64" y2="18.36" stroke={color} strokeWidth={2} strokeLinecap="round" />
+      <Line x1="18.36" y1="5.64" x2="19.78" y2="4.22" stroke={color} strokeWidth={2} strokeLinecap="round" />
     </Svg>
   );
 }
@@ -93,6 +93,7 @@ export default function ChatsScreen({
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const colors = {
     bg: isLight ? '#f8fafc' : '#0b0b0b',
+    headerBg: isLight ? '#ffffff' : '#0b0b0b',
     headerBorder: isLight ? '#e2e8f0' : '#1f2937',
     cardBg: isLight ? '#ffffff' : '#0b0b0b',
     cardHover: isLight ? '#f5f5f5' : '#111214',
@@ -102,6 +103,11 @@ export default function ChatsScreen({
     muted: isLight ? '#9ca3af' : '#6b7280',
     inputBg: isLight ? '#ffffff' : '#1f1f1f',
     inputBorder: isLight ? '#cbd5e1' : '#30343a',
+    headerButtonBg: isLight ? '#ffffff' : '#111214',
+    headerButtonBorder: isLight ? '#cbd5e1' : '#30343a',
+    toggleTrack: isLight ? '#e2e8f0' : '#1f2937',
+    toggleKnob: isLight ? '#0f172a' : '#ffffff',
+    icon: isLight ? '#0f172a' : '#f8fafc',
   };
 
   const avatarMap = useMemo(() => {
@@ -130,7 +136,7 @@ export default function ChatsScreen({
   const [maxOptionsHeight, setMaxOptionsHeight] = useState(280);
   const selectRef = useRef<View | null>(null);
   const composerReserve = 96;
-  const emptyPaddingTop = useMemo(() => Math.max(12, (insets.top || 0) + 4), [insets.top]);
+  const emptyPaddingTop = useMemo(() => Math.max(16, (insets.top || 0) + 8), [insets.top]);
   const emptyPaddingBottom = useMemo(() => Math.max(16, (insets.bottom || 0) + 16), [insets.bottom]);
   const newChatWidth = useMemo(() => Math.min(260, Math.max(180, Math.floor(windowWidth * 0.5))), [windowWidth]);
 
@@ -172,6 +178,7 @@ export default function ChatsScreen({
           styles.header,
           {
             borderBottomColor: colors.headerBorder,
+            backgroundColor: colors.headerBg,
           },
         ]}
       >
@@ -180,17 +187,17 @@ export default function ChatsScreen({
         ) : null}
         <Text style={[styles.headerBrand, { color: colors.text }]}>Trumpus</Text>
         <View style={styles.headerActions}>
-          <Pressable style={[styles.themeToggle, isLight ? styles.themeToggleLight : styles.themeToggleDark]} onPress={onToggleTheme}>
+          <Pressable style={[styles.themeToggle, { backgroundColor: colors.toggleTrack }]} onPress={onToggleTheme}>
             <View style={[styles.themeIconWrap, styles.themeIconLeft, isLight ? styles.themeIconDim : null]}>
-              <MoonIcon />
+              <MoonIcon color={colors.icon} />
             </View>
             <View style={[styles.themeIconWrap, styles.themeIconRight, !isLight ? styles.themeIconDim : null]}>
-              <SunIcon />
+              <SunIcon color={colors.icon} />
             </View>
-            <Animated.View style={[styles.themeKnob, { transform: [{ translateX: toggleX }] }]} />
+            <Animated.View style={[styles.themeKnob, { backgroundColor: colors.toggleKnob, transform: [{ translateX: toggleX }] }]} />
           </Pressable>
-          <Pressable style={styles.logoutBtn} onPress={onLogout}>
-            <LogoutIcon color={isLight ? '#0f172a' : '#e2e8f0'} />
+          <Pressable style={[styles.logoutBtn, { backgroundColor: colors.headerButtonBg, borderColor: colors.headerButtonBorder }]} onPress={onLogout}>
+            <LogoutIcon color={colors.icon} />
           </Pressable>
         </View>
       </View>
@@ -232,7 +239,11 @@ export default function ChatsScreen({
         <View style={[styles.emptyWrap, { paddingTop: emptyPaddingTop, paddingBottom: emptyPaddingBottom }]}>
           <Text style={[styles.emptyTitle, { color: colors.text }]}>Start new chat with...</Text>
           <Pressable
-            style={[styles.select, { backgroundColor: colors.cardBg, borderColor: isLight ? '#c9c9c9' : colors.border }]}
+            style={[
+              styles.select,
+              pickerOpen ? styles.selectOpen : null,
+              { backgroundColor: colors.cardBg, borderColor: isLight ? '#c9c9c9' : colors.border },
+            ]}
             onPress={() => setPickerOpen((v) => !v)}
             ref={selectRef}
           >
@@ -405,7 +416,7 @@ const styles = StyleSheet.create({
   emptyWrap: {
     flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     paddingHorizontal: 16,
     paddingTop: 0,
     gap: 18,
@@ -424,6 +435,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  selectOpen: {
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
   },
   selectAvatar: {
     width: 42,
@@ -451,7 +466,10 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 2,
     paddingVertical: 0,
-    marginTop: -2,
+    marginTop: 0,
+    borderTopWidth: 0,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
   },
   selectItem: {
     flexDirection: 'row',
