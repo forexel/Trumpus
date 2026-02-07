@@ -2,8 +2,8 @@ import { Animated, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView,
 import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import eagle from '../../assets/eagle.png';
 import trump from '../../assets/DonaldTrump.png';
+import eagle from '../../assets/eagle.png';
 import musk from '../../assets/ElonMask.png';
 import kanye from '../../assets/KaneyWest.png';
 import nixon from '../../assets/RichardNixon.png';
@@ -52,12 +52,21 @@ function SunIcon() {
   );
 }
 
-function LogoutIcon() {
+function LogoutIcon({ color }: { color: string }) {
   return (
     <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-      <Path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke="#e2e8f0" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-      <Path d="M16 17l5-5-5-5" stroke="#e2e8f0" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-      <Line x1="21" y1="12" x2="9" y2="12" stroke="#e2e8f0" strokeWidth={2} strokeLinecap="round" />
+      <Path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M16 17l5-5-5-5" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Line x1="21" y1="12" x2="9" y2="12" stroke={color} strokeWidth={2} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+function SendArrowIcon({ color }: { color: string }) {
+  return (
+    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+      <Path d="M5 12h12" stroke={color} strokeWidth={2.6} strokeLinecap="round" />
+      <Path d="M13 6l6 6-6 6" stroke={color} strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );
 }
@@ -81,6 +90,9 @@ export default function ChatDetailScreen({
   const [typing, setTyping] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
+  const dotA = useRef(new Animated.Value(0.2)).current;
+  const dotB = useRef(new Animated.Value(0.2)).current;
+  const dotC = useRef(new Animated.Value(0.2)).current;
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollRef = useRef<ScrollView | null>(null);
 
@@ -137,8 +149,6 @@ export default function ChatDetailScreen({
     inputBorder: isLight ? '#cbd5e1' : '#30343a',
   };
 
-  const headerOffset = 56 + (insets.top || 0);
-
   useEffect(() => {
     Animated.timing(toggleX, {
       toValue: isLight ? 0 : 24,
@@ -146,6 +156,34 @@ export default function ChatDetailScreen({
       useNativeDriver: true,
     }).start();
   }, [isLight, toggleX]);
+
+  useEffect(() => {
+    if (!typing) {
+      dotA.setValue(0.2);
+      dotB.setValue(0.2);
+      dotC.setValue(0.2);
+      return;
+    }
+    const pulse = (dot: Animated.Value, delay: number) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(dot, { toValue: 1, duration: 260, useNativeDriver: true }),
+          Animated.timing(dot, { toValue: 0.2, duration: 260, useNativeDriver: true }),
+        ])
+      );
+    const a = pulse(dotA, 0);
+    const b = pulse(dotB, 120);
+    const c = pulse(dotC, 240);
+    a.start();
+    b.start();
+    c.start();
+    return () => {
+      a.stop();
+      b.stop();
+      c.stop();
+    };
+  }, [typing, dotA, dotB, dotC]);
 
   return (
     <KeyboardAvoidingView
@@ -158,8 +196,6 @@ export default function ChatDetailScreen({
           styles.header,
           {
             borderBottomColor: colors.headerBorder,
-            paddingTop: insets.top || 0,
-            height: 56 + (insets.top || 0),
           },
         ]}
       >
@@ -182,7 +218,7 @@ export default function ChatDetailScreen({
             <Animated.View style={[styles.themeKnob, { transform: [{ translateX: toggleX }] }]} />
           </Pressable>
           <Pressable style={styles.logoutBtn} onPress={onLogout}>
-            <LogoutIcon />
+            <LogoutIcon color={isLight ? '#0f172a' : '#e2e8f0'} />
           </Pressable>
         </View>
       </View>
@@ -220,9 +256,9 @@ export default function ChatDetailScreen({
             ]}
           >
             <View style={styles.typingDots}>
-              <View style={styles.dot} />
-              <View style={styles.dot} />
-              <View style={styles.dot} />
+              <Animated.View style={[styles.dot, { opacity: dotA, transform: [{ scale: dotA }] }]} />
+              <Animated.View style={[styles.dot, { opacity: dotB, transform: [{ scale: dotB }] }]} />
+              <Animated.View style={[styles.dot, { opacity: dotC, transform: [{ scale: dotC }] }]} />
             </View>
           </View>
         ) : null}
@@ -234,12 +270,15 @@ export default function ChatDetailScreen({
           {
             borderTopColor: colors.headerBorder,
             backgroundColor: colors.bg,
-            paddingBottom: Math.max(insets.bottom, 0),
+            paddingBottom: 5,
           },
         ]}
       >
         <TextInput
-          style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
+          style={[
+            styles.input,
+            { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text },
+          ]}
           placeholder="Type a message..."
           placeholderTextColor="#9ca3af"
           value={text}
@@ -247,7 +286,7 @@ export default function ChatDetailScreen({
           editable={!sending}
         />
         <Pressable
-          style={[styles.send, typing ? styles.sendStop : null]}
+          style={styles.send}
           onPress={async () => {
             if (typing) {
               setTyping(false);
@@ -273,7 +312,7 @@ export default function ChatDetailScreen({
           }}
           disabled={sending}
         >
-          {typing ? <View style={styles.stopIcon} /> : <Image source={eagle} style={styles.sendIcon} />}
+          {typing ? <View style={styles.sendStopSquare} /> : <Image source={eagle} style={styles.sendIcon} />}
         </Pressable>
       </View>
       {sendError ? <Text style={styles.sendError}>{sendError}</Text> : null}
@@ -286,7 +325,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    height: 56,
+    height: 44,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
     flexDirection: 'row',
@@ -294,8 +333,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   back: {
-    width: 26,
-    height: 26,
+    width: 18,
+    height: 18,
     borderLeftWidth: 2,
     borderBottomWidth: 2,
     borderColor: '#e2e8f0',
@@ -365,15 +404,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 8,
     borderTopWidth: 1,
   },
   input: {
     flex: 1,
+    height: 48,
     borderRadius: 24,
     paddingHorizontal: 18,
-    paddingVertical: 14,
+    paddingVertical: 0,
     borderWidth: 1,
+    textAlignVertical: 'center',
   },
   send: {
     width: 48,
@@ -383,19 +424,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sendStop: {
-    backgroundColor: '#111827',
-  },
-  sendIcon: {
-    width: 22,
-    height: 22,
-    tintColor: '#fff',
-  },
-  stopIcon: {
-    width: 14,
-    height: 14,
-    backgroundColor: '#ffffff',
+  sendStopSquare: {
+    width: 12,
+    height: 12,
     borderRadius: 2,
+    backgroundColor: '#ffffff',
   },
   sendError: {
     color: '#f87171',
@@ -462,5 +495,10 @@ const styles = StyleSheet.create({
     color: '#e2e8f0',
     fontSize: 14,
     fontWeight: '700',
+  },
+  sendIcon: {
+    width: 22,
+    height: 22,
+    tintColor: '#fff',
   },
 });
