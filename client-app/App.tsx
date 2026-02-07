@@ -24,6 +24,7 @@ export default function App() {
   const [loadingChats, setLoadingChats] = useState(false);
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
   const theme = { mode: themeMode };
+  const isLight = themeMode === 'light';
 
   const loadChats = async () => {
     setLoadingChats(true);
@@ -68,7 +69,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
+      <SafeAreaView style={[styles.screen, { backgroundColor: isLight ? '#f8fafc' : '#0b0b0b' }]} edges={['top', 'bottom']}>
         {!authReady ? null : (
           <>
           {errorState ? (
@@ -151,7 +152,7 @@ export default function App() {
         </>
       )}
 
-      <StatusBar style="light" />
+      <StatusBar style={isLight ? 'dark' : 'light'} />
       </SafeAreaView>
     </SafeAreaProvider>
   );
