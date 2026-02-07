@@ -120,9 +120,13 @@ export default function NewChatPage() {
   useLayoutEffect(() => {
     if (!isOpen || !optionsRef.current) return
     const rect = optionsRef.current.getBoundingClientRect()
-    const available = window.innerHeight - rect.top - 16
-    const clamped = Math.max(140, Math.min(392, Math.floor(available)))
-    setOptionsMaxHeight(clamped)
+    const viewportHeight = window.visualViewport?.height ?? window.innerHeight
+    const available = viewportHeight - rect.top - 16
+    const rowHeight = 56
+    const rowsFit = Math.max(1, Math.floor(available / rowHeight))
+    const maxRows = Math.min(7, Math.max(3, rowsFit))
+    const next = Math.min(available, rowHeight * maxRows)
+    setOptionsMaxHeight(Math.max(rowHeight, Math.floor(next)))
   }, [isOpen])
 
   async function startChat(persona: Persona) {

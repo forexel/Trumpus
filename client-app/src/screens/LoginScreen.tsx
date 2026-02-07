@@ -11,13 +11,11 @@ import { saveTokens } from '../lib/auth';
 WebBrowser.maybeCompleteAuthSession();
 
 export default function LoginScreen({
-  onGoogleStatus,
   onForgot,
   onRegister,
   onLogin,
   onError,
 }: {
-  onGoogleStatus: (msg: string) => void;
   onForgot: () => void;
   onRegister: () => void;
   onLogin: () => void;
@@ -27,7 +25,6 @@ export default function LoginScreen({
   const [password, setPassword] = useState('');
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
-  const [formError, setFormError] = useState('');
   const androidClientIdBase = GOOGLE_ANDROID_CLIENT_ID.replace('.apps.googleusercontent.com', '');
   const androidRedirectUri = androidClientIdBase
     ? makeRedirectUri({ native: `com.googleusercontent.apps.${androidClientIdBase}:/oauthredirect` })
@@ -38,10 +35,6 @@ export default function LoginScreen({
     webClientId: GOOGLE_WEB_CLIENT_ID,
     redirectUri,
   });
-
-  useEffect(() => {
-    if (!request?.url) return;
-  }, [request?.url]);
 
   useEffect(() => {
     async function handleGoogle() {
@@ -63,27 +56,21 @@ export default function LoginScreen({
         };
 
         try {
-          onGoogleStatus('Sending Google token...');
           await retry();
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'unknown';
-          setFormError(msg || 'Authentication error');
           setEmailError(' ');
-          setPasswordError(' ');
+          setPasswordError(msg || 'Authentication error');
         }
       } else if (response?.type === 'error') {
         const details = response.params ? JSON.stringify(response.params) : 'no details';
         const msg = response.error?.message ?? 'Google auth error';
-        onGoogleStatus('');
-        setFormError(msg);
         setEmailError(' ');
-        setPasswordError(' ');
+        setPasswordError(msg);
       }
     }
     handleGoogle();
-  }, [response, onGoogleStatus]);
-
-  const isValidEmail = (value: string) => /\S+@\S+\.\S+/.test(value.trim());
+  }, [response]);
 
   return (
     <AuthLayout title="Welcome Back">
@@ -108,16 +95,14 @@ export default function LoginScreen({
           onChangeText={setPassword}
         />
         <Text style={styles.errorText}>{passwordError || ' '}</Text>
-        <Text style={styles.formError}>{formError || ' '}</Text>
 
         <Pressable
           style={styles.primaryButton}
           onPress={async () => {
-            const nextEmailError = email ? (isValidEmail(email) ? '' : 'Invalid email') : 'Required';
+            const nextEmailError = email ? '' : 'Required';
             const nextPasswordError = password ? '' : 'Required';
             setEmailError(nextEmailError);
             setPasswordError(nextPasswordError);
-            setFormError('');
             if (nextEmailError || nextPasswordError) return;
 
             const retry = async () => {
@@ -137,10 +122,14 @@ export default function LoginScreen({
             try {
               await retry();
             } catch (err) {
-              const msg = err instanceof Error ? err.message : 'Invalid credentials';
-              setFormError(msg);
+              const raw = err instanceof Error ? err.message : 'Invalid credentials';
+              const lowered = raw.toLowerCase();
+              const msg =
+                lowered.includes('password length') || lowered.includes('6-128')
+                  ? 'Invalid credentials'
+                  : raw;
               setEmailError(' ');
-              setPasswordError(' ');
+              setPasswordError(msg);
             }
           }}
         >
@@ -209,13 +198,6 @@ const styles = StyleSheet.create({
     color: '#bf0a30',
     marginTop: 5,
     marginBottom: 0,
-  },
-  formError: {
-    minHeight: 12,
-    fontSize: 12,
-    color: '#bf0a30',
-    marginTop: 2,
-    marginBottom: 4,
   },
   primaryButton: {
     marginTop: 10,

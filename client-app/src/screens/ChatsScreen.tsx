@@ -52,12 +52,12 @@ function SunIcon() {
   );
 }
 
-function LogoutIcon() {
+function LogoutIcon({ color }: { color: string }) {
   return (
     <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-      <Path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke="#e2e8f0" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-      <Path d="M16 17l5-5-5-5" stroke="#e2e8f0" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-      <Line x1="21" y1="12" x2="9" y2="12" stroke="#e2e8f0" strokeWidth={2} strokeLinecap="round" />
+      <Path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M16 17l5-5-5-5" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Line x1="21" y1="12" x2="9" y2="12" stroke={color} strokeWidth={2} strokeLinecap="round" />
     </Svg>
   );
 }
@@ -90,8 +90,7 @@ export default function ChatsScreen({
   const [showNewChat, setShowNewChat] = useState(false);
   const isLight = theme?.mode === 'light';
   const toggleX = useRef(new Animated.Value(isLight ? 0 : 24)).current;
-  const { height: windowHeight } = useWindowDimensions();
-  const [selectLayout, setSelectLayout] = useState<{ y: number; height: number } | null>(null);
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const colors = {
     bg: isLight ? '#f8fafc' : '#0b0b0b',
     headerBorder: isLight ? '#e2e8f0' : '#1f2937',
@@ -124,13 +123,26 @@ export default function ChatsScreen({
 
   const hasChats = chats.length > 0;
   const listItems = chats;
-  const maxOptionsHeight = useMemo(() => {
-    if (!selectLayout) return 320;
-    const composerReserve = 120;
-    const available = windowHeight - (selectLayout.y + selectLayout.height) - insets.bottom - composerReserve;
-    const clamped = Math.max(140, Math.min(392, Math.floor(available)));
-    return clamped;
-  }, [selectLayout, windowHeight, insets.bottom]);
+  const selectablePersonas = useMemo(
+    () => personas.filter((p) => p.name !== persona),
+    [persona]
+  );
+  const [maxOptionsHeight, setMaxOptionsHeight] = useState(280);
+  const selectRef = useRef<View | null>(null);
+  const composerReserve = 96;
+  const emptyPaddingTop = useMemo(() => Math.max(12, (insets.top || 0) + 4), [insets.top]);
+  const emptyPaddingBottom = useMemo(() => Math.max(16, (insets.bottom || 0) + 16), [insets.bottom]);
+  const newChatWidth = useMemo(() => Math.min(260, Math.max(180, Math.floor(windowWidth * 0.5))), [windowWidth]);
+
+  useEffect(() => {
+    if (!pickerOpen || !selectRef.current) return;
+    selectRef.current.measureInWindow((x, y, w, h) => {
+      const rowHeight = 56;
+      const available = windowHeight - (y + h) - composerReserve - Math.max(12, (insets.bottom || 0) + 8);
+      const maxRows = Math.min(7, Math.max(3, Math.floor(available / rowHeight)));
+      setMaxOptionsHeight(Math.min(available, rowHeight * maxRows));
+    });
+  }, [pickerOpen, windowHeight, insets.bottom]);
 
   const handleStart = async () => {
     if (!text.trim() || sending) return;
@@ -153,15 +165,13 @@ export default function ChatsScreen({
     <KeyboardAvoidingView
       style={[styles.screen, { backgroundColor: colors.bg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : 56 + (insets.top || 0)}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : 44 + (insets.top || 0)}
     >
       <View
         style={[
           styles.header,
           {
             borderBottomColor: colors.headerBorder,
-            paddingTop: insets.top || 0,
-            height: 56 + (insets.top || 0),
           },
         ]}
       >
@@ -180,7 +190,7 @@ export default function ChatsScreen({
             <Animated.View style={[styles.themeKnob, { transform: [{ translateX: toggleX }] }]} />
           </Pressable>
           <Pressable style={styles.logoutBtn} onPress={onLogout}>
-            <LogoutIcon />
+            <LogoutIcon color={isLight ? '#0f172a' : '#e2e8f0'} />
           </Pressable>
         </View>
       </View>
@@ -219,12 +229,12 @@ export default function ChatsScreen({
           })}
         </ScrollView>
       ) : (
-        <View style={styles.emptyWrap}>
+        <View style={[styles.emptyWrap, { paddingTop: emptyPaddingTop, paddingBottom: emptyPaddingBottom }]}>
           <Text style={[styles.emptyTitle, { color: colors.text }]}>Start new chat with...</Text>
           <Pressable
             style={[styles.select, { backgroundColor: colors.cardBg, borderColor: isLight ? '#c9c9c9' : colors.border }]}
             onPress={() => setPickerOpen((v) => !v)}
-            onLayout={(event) => setSelectLayout({ y: event.nativeEvent.layout.y, height: event.nativeEvent.layout.height })}
+            ref={selectRef}
           >
             <Image source={avatarMap.get(persona) ?? trump} style={styles.selectAvatar} />
             <Text style={[styles.selectText, { color: isLight ? '#111' : colors.text }]}>{persona}</Text>
@@ -244,7 +254,7 @@ export default function ChatsScreen({
               ]}
             >
               <ScrollView style={{ maxHeight: maxOptionsHeight }}>
-                {personas.map((p) => (
+                {selectablePersonas.map((p) => (
                   <Pressable
                     key={p.name}
                     style={styles.selectItem}
@@ -257,7 +267,6 @@ export default function ChatsScreen({
                       <Image source={p.avatar} style={styles.selectAvatarImage} />
                     </View>
                     <Text style={[styles.selectItemText, { color: isLight ? '#111' : colors.text }]}>{p.name}</Text>
-                    <View style={[styles.selectCaret, { borderColor: isLight ? '#bdbdbd' : colors.subtext }]} />
                   </Pressable>
                 ))}
               </ScrollView>
@@ -267,7 +276,13 @@ export default function ChatsScreen({
       )}
 
       {hasChats && !showNewChat ? (
-        <Pressable style={[styles.newChatBtn, { bottom: (insets.bottom || 0) + 24 }]} onPress={() => setShowNewChat(true)}>
+        <Pressable
+          style={[
+            styles.newChatBtn,
+            { bottom: (insets.bottom || 0) + 5, width: newChatWidth },
+          ]}
+          onPress={() => setShowNewChat(true)}
+        >
           <Text style={styles.newChatText}>New chat</Text>
         </Pressable>
       ) : null}
@@ -278,7 +293,7 @@ export default function ChatsScreen({
             {
               borderTopColor: colors.headerBorder,
               backgroundColor: colors.bg,
-              paddingBottom: Math.max(insets.bottom, 4),
+              paddingBottom: 5,
             },
           ]}
         > 
@@ -306,7 +321,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#0b0b0b',
   },
   header: {
-    height: 56,
+    height: 44,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
     justifyContent: 'space-between',
@@ -463,13 +478,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     flex: 1,
   },
-  selectCaret: {
-    width: 10,
-    height: 10,
-    borderRightWidth: 2,
-    borderBottomWidth: 2,
-    transform: [{ rotate: '45deg' }],
-  },
   row: {
     borderWidth: 1,
     borderLeftWidth: 0,
@@ -515,17 +523,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 8,
     borderTopWidth: 1,
     borderTopColor: '#1f2937',
     backgroundColor: '#0b0b0b',
   },
   input: {
     flex: 1,
+    height: 48,
     borderRadius: 24,
     paddingHorizontal: 18,
-    paddingVertical: 14,
+    paddingVertical: 0,
     borderWidth: 1,
+    textAlignVertical: 'center',
   },
   send: {
     width: 48,
@@ -548,9 +558,10 @@ const styles = StyleSheet.create({
     bottom: 24,
     alignSelf: 'center',
     backgroundColor: '#bf0a30',
-    paddingHorizontal: 18,
-    paddingVertical: 10,
+    height: 60,
     borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   newChatText: {
     color: '#fff',

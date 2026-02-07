@@ -139,13 +139,21 @@ export default function ChatsPage() {
       const el = selectRef.current
       if (!el) return
       const rect = el.getBoundingClientRect()
-      const available = window.innerHeight - rect.bottom - 16
-      const next = Math.max(140, Math.min(392, Math.floor(available)))
-      setOptionsMaxHeight(next)
+      const viewportHeight = window.visualViewport?.height ?? window.innerHeight
+      const available = viewportHeight - rect.bottom - 16
+      const rowHeight = 56
+      const rowsFit = Math.max(1, Math.floor(available / rowHeight))
+      const maxRows = Math.min(7, Math.max(3, rowsFit))
+      const next = Math.min(available, rowHeight * maxRows)
+      setOptionsMaxHeight(Math.max(rowHeight, Math.floor(next)))
     }
     update()
     window.addEventListener('resize', update)
-    return () => window.removeEventListener('resize', update)
+    window.visualViewport?.addEventListener('resize', update)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.visualViewport?.removeEventListener('resize', update)
+    }
   }, [isOpen])
 
   const handleLogout = () => {
@@ -266,7 +274,7 @@ export default function ChatsPage() {
             <button className="retry-btn" onClick={loadChats}>Try again</button>
           </div>
         ) : !hasChats ? (
-          <div className="empty-state">
+          <div className="empty-state persona-empty">
             <div className="persona-select-block">
               <div className="persona-select-title">Start new chat with...</div>
               <div className={`persona-select-list ${isOpen ? 'open' : ''}`} ref={selectRef}>

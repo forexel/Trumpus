@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
@@ -13,7 +13,6 @@ import { ChatItem, fetchChats } from './src/lib/api';
 
 export default function App() {
   const [screen, setScreen] = useState<'login' | 'register' | 'forgot' | 'chats' | 'chat'>('login');
-  const [status, setStatus] = useState('');
   const [errorState, setErrorState] = useState<{
     title: string;
     message: string;
@@ -90,7 +89,6 @@ export default function App() {
 
           {!errorState && screen === 'login' ? (
             <LoginScreen
-              onGoogleStatus={setStatus}
               onForgot={() => setScreen('forgot')}
               onRegister={() => setScreen('register')}
               onLogin={async () => {
@@ -153,11 +151,6 @@ export default function App() {
         </>
       )}
 
-      {status ? (
-        <View style={styles.statusWrap}>
-          <Text style={styles.statusText}>{status}</Text>
-        </View>
-      ) : null}
       <StatusBar style="light" />
       </SafeAreaView>
     </SafeAreaProvider>
@@ -168,19 +161,5 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: '#0b1226',
-  },
-  statusWrap: {
-    position: 'absolute',
-    left: 24,
-    right: 24,
-    bottom: 24,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    borderRadius: 10,
-    padding: 10,
-  },
-  statusText: {
-    color: '#e2e8f0',
-    fontSize: 12,
-    textAlign: 'center',
   },
 });
