@@ -1,33 +1,15 @@
 import { useEffect } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
+import { getSession } from '../lib/api'
 
 export default function GoogleCallbackPage() {
-  const location = useLocation()
   const navigate = useNavigate()
 
   useEffect(() => {
-    const params = new URLSearchParams(location.search)
-    const accessToken = params.get('access_token')
-    const refreshToken = params.get('refresh_token')
-    const accessExpires = params.get('access_expires')
-    const email = params.get('email')
-    const clientId = params.get('client_id')
-    if (accessToken && refreshToken) {
-      localStorage.setItem('access_token', accessToken)
-      localStorage.setItem('client_token', accessToken)
-      localStorage.setItem('refresh_token', refreshToken)
-      if (accessExpires) {
-        localStorage.setItem('access_expires', accessExpires)
-      }
-    }
-    if (email) {
-      localStorage.setItem('client_email', email)
-    }
-    if (clientId) {
-      localStorage.setItem('client_id', clientId)
-    }
-    navigate('/chats', { replace: true })
-  }, [location.search, navigate])
+    getSession().finally(() => {
+      navigate('/chats', { replace: true })
+    })
+  }, [navigate])
 
   return (
     <div className="auth-screen">

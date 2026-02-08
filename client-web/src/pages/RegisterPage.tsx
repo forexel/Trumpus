@@ -29,13 +29,7 @@ export default function RegisterPage() {
     try {
       setLoading(true)
       const data = await register(email, password)
-      if (data.access_token && data.refresh_token) {
-        localStorage.setItem('access_token', data.access_token)
-        localStorage.setItem('refresh_token', data.refresh_token)
-        if (data.access_expires) localStorage.setItem('access_expires', data.access_expires)
-      }
-      localStorage.setItem('client_email', data.email)
-      localStorage.setItem('client_id', data.client_id)
+      void data
       navigate('/chats')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed')

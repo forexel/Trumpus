@@ -1,0 +1,11 @@
+trumpus.tech {
+  reverse_proxy /api/* api:8000
+  reverse_proxy /ws api:8000
+  reverse_proxy client-web:5173
+}
+
+admin.trumpus.tech {
+  reverse_proxy /api/* api:8000
+  reverse_proxy /ws api:8000
+  reverse_proxy admin-web:5174
+}

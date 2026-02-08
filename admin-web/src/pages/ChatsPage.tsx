@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { fetchClients, AdminClient } from '../lib/api'
+import { fetchClients, getWsBase, AdminClient } from '../lib/api'
 import ChatDetailPage from './ChatDetailPage'
 
 export default function ChatsPage() {
@@ -24,6 +24,31 @@ export default function ChatsPage() {
       })
     return () => {
       mounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    const ws = new WebSocket(`${getWsBase()}/ws?scope=all`)
+    ws.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data)
+        const chatId = payload?.chat_id as string | undefined
+        const unread = payload?.unread_for_admin as number | undefined
+        if (!chatId || typeof unread !== 'number') return
+        setClients((prev) =>
+          prev.map((client) => {
+            const chats = client.chats.map((chat) =>
+              chat.id === chatId ? { ...chat, unread_for_admin: unread } : chat
+            )
+            return { ...client, chats }
+          })
+        )
+      } catch {
+        // ignore malformed events
+      }
+    }
+    return () => {
+      ws.close()
     }
   }, [])
 

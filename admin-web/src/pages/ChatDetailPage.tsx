@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { fetchChatMessages, markChatRead, sendChatMessage, Message, AdminChat } from '../lib/api'
+import { fetchChatMessages, markChatRead, sendChatMessage, getWsBase, Message, AdminChat } from '../lib/api'
 
 type ChatDetailProps = {
   chatId?: string
@@ -49,6 +49,32 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
       })
     return () => {
       mounted = false
+    }
+  }, [chatId])
+
+  useEffect(() => {
+    if (!chatId) return
+    const ws = new WebSocket(`${getWsBase()}/ws?chat_id=${encodeURIComponent(chatId)}`)
+    ws.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data)
+        if (payload?.type !== 'message_created') return
+        if (payload?.chat_id !== chatId) return
+        const incoming = payload?.message as Message | undefined
+        if (!incoming) return
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === incoming.id)) return prev
+          return [...prev, incoming]
+        })
+        if (incoming.sender === 'client') {
+          markChatRead(chatId)
+        }
+      } catch {
+        // ignore malformed events
+      }
+    }
+    return () => {
+      ws.close()
     }
   }, [chatId])
 

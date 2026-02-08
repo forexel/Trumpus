@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { adminLogin, setToken } from '../lib/api'
+import { adminLogin } from '../lib/api'
 
-export default function LoginPage() {
+export default function LoginPage({ onLogin }: { onLogin: () => void }) {
   const [username, setUsername] = useState('admin')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -14,8 +14,8 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
     try {
-      const data = await adminLogin(username.trim(), password)
-      setToken(data.token)
+      await adminLogin(username.trim(), password)
+      onLogin()
       navigate('/clients')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')
@@ -35,7 +35,7 @@ export default function LoginPage() {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          placeholder="showme123"
+          placeholder="Enter password"
         />
         {error ? <div className="error">{error}</div> : null}
         <button type="submit" disabled={loading}>
