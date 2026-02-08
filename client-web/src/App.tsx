@@ -16,6 +16,7 @@ export default function App() {
   const [authed, setAuthed] = useState(false)
   useEffect(() => {
     let active = true
+    setSessionReady(false)
     getSession()
       .then((data) => {
         if (active) setAuthed(Boolean(data?.client_id))
