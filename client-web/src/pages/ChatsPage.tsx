@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { fetchChats, fetchMessages, getClientId, ChatSummary, deleteChat, createChat, sendMessage } from '../lib/api'
+import { fetchChats, fetchMessages, getClientId, ChatSummary, deleteChat, createChat, sendMessage, logout } from '../lib/api'
 import { useTheme } from '../lib/useTheme'
 import { PERSONAS, Persona } from './NewChatPage'
 import trumpAvatar from '../assets/DonaldTrump.png'
@@ -156,13 +156,8 @@ export default function ChatsPage() {
     }
   }, [isOpen])
 
-  const handleLogout = () => {
-    localStorage.removeItem('client_token')
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('refresh_token')
-    localStorage.removeItem('access_expires')
-    localStorage.removeItem('client_email')
-    localStorage.removeItem('client_id')
+  const handleLogout = async () => {
+    await logout()
     navigate('/login')
   }
 

@@ -5,7 +5,7 @@
 - Auth
   - Email/password (Postgres)
   - Google OAuth (web client)
-  - Reset password (stub; email sending not wired)
+  - Reset password (token link via SMTP)
 - Client Chat
   - Chat list
   - Messages

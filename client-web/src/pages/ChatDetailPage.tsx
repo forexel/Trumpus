@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { fetchChats, fetchMessages, getClientId, sendMessage, updateChatTitle, setLastChatId, Message, ChatSummary, getAIResponse, saveAIMessage, MOCK_MODE } from '../lib/api'
+import { fetchChats, fetchMessages, getClientId, getWsBase, sendMessage, updateChatTitle, setLastChatId, Message, ChatSummary } from '../lib/api'
 import { useTheme } from '../lib/useTheme'
 import { PERSONAS } from './NewChatPage'
 import eagleIcon from '../assets/eagle.png'
@@ -51,6 +51,7 @@ export default function ChatDetailPage() {
   const [loading, setLoading] = useState(true)
   const [typing, setTyping] = useState(false)
   const [sending, setSending] = useState(false)
+  const [wsConnected, setWsConnected] = useState(false)
   const navigate = useNavigate()
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -102,26 +103,18 @@ export default function ChatDetailPage() {
     pendingAIRef.current = true
     setTyping(true)
 
-    if (MOCK_MODE) {
-      getAIResponse(chat.persona || 'Donald Trump', messages)
-        .then(aiResponse => {
-          const aiMsg = saveAIMessage(chatId, aiResponse)
-          setMessages(prev => [...prev, aiMsg])
-        })
-        .catch(error => {
-          console.error('AI response error:', error)
-          const errorMsg = saveAIMessage(chatId, 'Sorry, I cannot respond right now. Please try again.')
-          setMessages(prev => [...prev, errorMsg])
-        })
-        .finally(() => {
+    if (wsConnected) {
+      const timeout = window.setTimeout(() => {
+        if (pendingAIRef.current) {
           setTyping(false)
           pendingAIRef.current = false
-        })
-      return
+        }
+      }, 60000)
+      return () => window.clearTimeout(timeout)
     }
-
+    pollingTokenRef.current += 1
     pollForAI(chatId, messages.length)
-  }, [loading, chat, messages.length]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loading, chat, messages.length, wsConnected]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Focus input on mount
   useEffect(() => {
@@ -129,6 +122,36 @@ export default function ChatDetailPage() {
       inputRef.current?.focus()
     }
   }, [loading])
+
+  useEffect(() => {
+    if (!chatId) return
+    const ws = new WebSocket(`${getWsBase()}/ws?chat_id=${encodeURIComponent(chatId)}`)
+    ws.onopen = () => setWsConnected(true)
+    ws.onclose = () => setWsConnected(false)
+    ws.onerror = () => setWsConnected(false)
+    ws.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data)
+        if (payload?.type !== 'message_created') return
+        if (payload?.chat_id !== chatId) return
+        const incoming = payload?.message as Message | undefined
+        if (!incoming) return
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === incoming.id)) return prev
+          return [...prev, incoming]
+        })
+        if (incoming.sender === 'admin') {
+          setTyping(false)
+          pendingAIRef.current = false
+        }
+      } catch {
+        // ignore malformed events
+      }
+    }
+    return () => {
+      ws.close()
+    }
+  }, [chatId])
 
   useEffect(() => {
     pollingActiveRef.current = true
@@ -180,22 +203,8 @@ export default function ChatDetailPage() {
     setTyping(true)
     setSending(false)
     
-    if (MOCK_MODE) {
-      // В MOCK_MODE вызываем OpenAI напрямую
-      try {
-        const aiResponse = await getAIResponse(personaName, updatedMessages)
-        const aiMsg = saveAIMessage(chatId, aiResponse)
-        setMessages([...updatedMessages, aiMsg])
-      } catch (error) {
-        console.error('AI response error:', error)
-        const errorMsg = saveAIMessage(chatId, 'Sorry, I cannot respond right now. Please try again.')
-        setMessages([...updatedMessages, errorMsg])
-      } finally {
-        setTyping(false)
-        pendingAIRef.current = false
-      }
-    } else {
-      // Wait for LLM response via API
+    // Wait for LLM response via WS (fallback to polling if disconnected)
+    if (!wsConnected) {
       pollingTokenRef.current += 1
       pollForAI(chatId, updatedMessages.length)
     }

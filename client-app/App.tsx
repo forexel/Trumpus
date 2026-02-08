@@ -1,10 +1,12 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { StyleSheet } from 'react-native';
+import * as Linking from 'expo-linking';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
 import ForgotScreen from './src/screens/ForgotScreen';
+import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 import ChatsScreen from './src/screens/ChatsScreen';
 import ChatDetailScreen from './src/screens/ChatDetailScreen';
 import ErrorScreen from './src/screens/ErrorScreen';
@@ -12,7 +14,8 @@ import { clearTokens, getAccessToken, refreshTokens } from './src/lib/auth';
 import { ChatItem, fetchChats } from './src/lib/api';
 
 export default function App() {
-  const [screen, setScreen] = useState<'login' | 'register' | 'forgot' | 'chats' | 'chat'>('login');
+  const [screen, setScreen] = useState<'login' | 'register' | 'forgot' | 'reset' | 'chats' | 'chat'>('login');
+  const [resetToken, setResetToken] = useState<string | null>(null);
   const [errorState, setErrorState] = useState<{
     title: string;
     message: string;
@@ -58,6 +61,21 @@ export default function App() {
       setAuthReady(true);
     }
     bootstrap();
+  }, []);
+
+  useEffect(() => {
+    const handleUrl = (url: string | null) => {
+      if (!url) return;
+      const parsed = Linking.parse(url);
+      const token = typeof parsed.queryParams?.token === 'string' ? parsed.queryParams.token : '';
+      if (!token) return;
+      setResetToken(token);
+      setScreen('reset');
+    };
+
+    Linking.getInitialURL().then(handleUrl);
+    const sub = Linking.addEventListener('url', (event) => handleUrl(event.url));
+    return () => sub.remove();
   }, []);
 
   const handleLogout = async () => {
@@ -119,6 +137,22 @@ export default function App() {
             />
           ) : null}
           {!errorState && screen === 'forgot' ? <ForgotScreen onBack={() => setScreen('login')} /> : null}
+          {!errorState && screen === 'reset' && resetToken ? (
+            <ResetPasswordScreen
+              token={resetToken}
+              onBack={() => setScreen('login')}
+              onSuccess={async () => {
+                setResetToken(null);
+                const items = await loadChats();
+                if (items.length > 0) {
+                  setActiveChat(items[0]);
+                  setScreen('chat');
+                } else {
+                  setScreen('chats');
+                }
+              }}
+            />
+          ) : null}
           {!errorState && screen === 'chats' ? (
             <ChatsScreen
               chats={chats}

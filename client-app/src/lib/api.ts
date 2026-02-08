@@ -73,3 +73,23 @@ export async function sendMessage(chatId: string, content: string, persona?: str
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as MessageItem;
 }
+
+export async function resetPasswordWithToken(token: string, newPassword: string) {
+  const res = await fetch(`${API_BASE_URL}/auth/reset-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+  if (!res.ok) throw new Error('Failed to reset password');
+  return (await res.json()) as {
+    access_token: string;
+    refresh_token: string;
+    access_expires?: string;
+    email: string;
+    client_id: string;
+  };
+}
+
+export function getWsBase() {
+  return API_BASE_URL.replace(/^http/, 'ws');
+}

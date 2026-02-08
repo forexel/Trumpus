@@ -1,6 +1,14 @@
 version: "3.9"
 
 services:
+  redis:
+    image: redis:7.2-alpine
+    container_name: trumpus_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - trumpus_redisdata:/data
+
   db:
     image: postgres:16
     container_name: trumpus_db
@@ -21,6 +29,14 @@ services:
     environment:
       DATABASE_URL: postgresql://trumpus:trumpus@db:5432/trumpus?sslmode=disable
       PORT: 8000
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-dev-secret}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
+      COOKIE_SECURE: "false"
+      CORS_ORIGINS: http://localhost:5173,http://localhost:5174
+      OAUTH_REDIRECT_ALLOWLIST: http://localhost:5173
+      TRUST_PROXY: "false"
       GOOGLE_CLIENT_ID: 813736117005-jm3t8ousstjbra6tcbe2hpi6khoeqhor.apps.googleusercontent.com
       GOOGLE_CLIENT_SECRET: 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
       GOOGLE_OAUTH_CALLBACK_URL: https://app.privetsuper.ru:18000/api/v1/auth/google/callback
@@ -29,6 +45,23 @@ services:
       - "8000:8000"
     depends_on:
       - db
+      - redis
+
+  worker:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: trumpus_worker
+    environment:
+      DATABASE_URL: postgresql://trumpus:trumpus@db:5432/trumpus?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      LLM_BASE: http://llm:8010
+      RUN_MODE: worker
+      JWT_SECRET: ${JWT_SECRET:-dev-secret}
+    depends_on:
+      - db
+      - redis
+      - llm
 
   admin-web:
     build:
@@ -49,7 +82,6 @@ services:
     container_name: trumpus_client_web
     environment:
       VITE_API_BASE: https://app.privetsuper.ru:18000/api/v1
-      VITE_MOCK_MODE: "false"
     ports:
       - "5173:5173"
     depends_on:
@@ -62,7 +94,6 @@ services:
     container_name: trumpus_llm
     environment:
       API_BASE: http://api:8000/api/v1
-      ADMIN_TOKEN: admin-token
       PORT: 8010
       LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -78,5 +109,23 @@ services:
     depends_on:
       - api
 
+  caddy:
+    image: caddy:2
+    container_name: trumpus_caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - client-web
+      - admin-web
+
 volumes:
   trumpus_pgdata:
+  trumpus_redisdata:
+  caddy_data:
+  caddy_config:

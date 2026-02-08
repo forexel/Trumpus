@@ -31,28 +31,14 @@ export type Message = {
   created_at: string
 }
 
-const tokenKey = 'admin_token'
-
-export function getToken() {
-  return localStorage.getItem(tokenKey) ?? ''
-}
-
-export function setToken(token: string) {
-  localStorage.setItem(tokenKey, token)
-}
-
-export function clearToken() {
-  localStorage.removeItem(tokenKey)
+export function getWsBase() {
+  return API_BASE.replace(/^http/, 'ws')
 }
 
 async function apiFetch(path: string, options: RequestInit = {}) {
   const headers = new Headers(options.headers)
   headers.set('Content-Type', 'application/json')
-  const token = getToken()
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`)
-  }
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers })
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' })
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
     throw new Error(data.error || `Request failed: ${res.status}`)
@@ -64,7 +50,15 @@ export async function adminLogin(username: string, password: string) {
   return apiFetch('/admin/login', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
-  }) as Promise<{ token: string }>
+  }) as Promise<{ ok: boolean }>
+}
+
+export async function getAdminSession() {
+  return apiFetch('/admin/session') as Promise<{ ok: boolean }>
+}
+
+export async function adminLogout() {
+  return apiFetch('/admin/logout', { method: 'POST' }) as Promise<{ ok: boolean }>
 }
 
 export async function fetchClients() {

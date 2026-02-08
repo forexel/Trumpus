@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -10,8 +12,10 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/mail"
+	"net"
 	"net/http"
+	"net/mail"
+	"net/smtp"
 	"net/url"
 	"os"
 	"strconv"
@@ -21,7 +25,9 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	_ "github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
+	"nhooyr.io/websocket"
 )
 
 type jsonMap map[string]any
@@ -37,10 +43,12 @@ const (
 )
 
 const (
-	defaultAccessTTLMinutes  = 15
-	defaultRefreshTTLDays    = 30
-	defaultRateLimitPerMin   = 60
-	maxAuthHeaderSize        = 2048
+	defaultAccessTTLMinutes = 15
+	defaultRefreshTTLDays   = 30
+	defaultRateLimitPerMin  = 60
+	defaultAdminTTlHours    = 8
+	defaultWSTTLMinutes     = 5
+	maxAuthHeaderSize       = 2048
 )
 
 type ctxKey string
@@ -97,7 +105,130 @@ type Store struct {
 
 var (
 	store *Store
+	rdb   *redis.Client
+	hub   *wsHub
 )
+
+type LLMJob struct {
+	ChatID    string `json:"chat_id"`
+	Persona   string `json:"persona"`
+	Content   string `json:"content"`
+	RequestID string `json:"request_id"`
+	Attempts  int    `json:"attempts"`
+}
+
+type ChatEvent struct {
+	Type           string   `json:"type"`
+	ChatID         string   `json:"chat_id"`
+	ClientID       string   `json:"client_id"`
+	Message        *Message `json:"message,omitempty"`
+	UnreadForAdmin int      `json:"unread_for_admin,omitempty"`
+	LastMessageAt  string   `json:"last_message_at,omitempty"`
+}
+
+type wsClient struct {
+	conn     *websocket.Conn
+	chatID   string
+	clientID string
+	adminAll bool
+}
+
+type wsHub struct {
+	mu       sync.RWMutex
+	byChat   map[string]map[*wsClient]struct{}
+	byClient map[string]map[*wsClient]struct{}
+	adminAll map[*wsClient]struct{}
+}
+
+func newWSHub() *wsHub {
+	return &wsHub{
+		byChat:   make(map[string]map[*wsClient]struct{}),
+		byClient: make(map[string]map[*wsClient]struct{}),
+		adminAll: make(map[*wsClient]struct{}),
+	}
+}
+
+func (h *wsHub) addClient(c *wsClient) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if c.chatID != "" {
+		bucket := h.byChat[c.chatID]
+		if bucket == nil {
+			bucket = make(map[*wsClient]struct{})
+			h.byChat[c.chatID] = bucket
+		}
+		bucket[c] = struct{}{}
+	}
+	if c.clientID != "" {
+		bucket := h.byClient[c.clientID]
+		if bucket == nil {
+			bucket = make(map[*wsClient]struct{})
+			h.byClient[c.clientID] = bucket
+		}
+		bucket[c] = struct{}{}
+	}
+	if c.adminAll {
+		h.adminAll[c] = struct{}{}
+	}
+}
+
+func (h *wsHub) removeClient(c *wsClient) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if c.chatID != "" {
+		if bucket := h.byChat[c.chatID]; bucket != nil {
+			delete(bucket, c)
+			if len(bucket) == 0 {
+				delete(h.byChat, c.chatID)
+			}
+		}
+	}
+	if c.clientID != "" {
+		if bucket := h.byClient[c.clientID]; bucket != nil {
+			delete(bucket, c)
+			if len(bucket) == 0 {
+				delete(h.byClient, c.clientID)
+			}
+		}
+	}
+	if c.adminAll {
+		delete(h.adminAll, c)
+	}
+}
+
+func (h *wsHub) broadcast(evt ChatEvent) {
+	payload, err := json.Marshal(evt)
+	if err != nil {
+		return
+	}
+	h.mu.RLock()
+	chatTargets := h.byChat[evt.ChatID]
+	clientTargets := h.byClient[evt.ClientID]
+	adminTargets := h.adminAll
+	h.mu.RUnlock()
+
+	for c := range chatTargets {
+		if err := writeWS(c.conn, payload); err != nil {
+			h.removeClient(c)
+		}
+	}
+	for c := range clientTargets {
+		if err := writeWS(c.conn, payload); err != nil {
+			h.removeClient(c)
+		}
+	}
+	for c := range adminTargets {
+		if err := writeWS(c.conn, payload); err != nil {
+			h.removeClient(c)
+		}
+	}
+}
+
+func writeWS(conn *websocket.Conn, payload []byte) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return conn.Write(ctx, websocket.MessageText, payload)
+}
 
 func newStore(dsn string) (*Store, error) {
 	db, err := sql.Open("postgres", dsn)
@@ -124,6 +255,12 @@ func (s *Store) migrate() error {
 		`CREATE TABLE IF NOT EXISTS users (
 			email TEXT PRIMARY KEY,
 			password TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS password_resets (
+			token_hash TEXT PRIMARY KEY,
+			email TEXT NOT NULL,
+			expires_at TIMESTAMPTZ NOT NULL,
+			used_at TIMESTAMPTZ
 		)`,
 		`CREATE TABLE IF NOT EXISTS chats (
 			id TEXT PRIMARY KEY,
@@ -209,6 +346,68 @@ func (s *Store) authenticateUser(email, password string) (*Client, bool, error) 
 	}
 	if newHash != "" {
 		_, _ = s.db.Exec(`UPDATE users SET password=$1 WHERE email=$2`, newHash, email)
+	}
+	client, err := s.getOrCreateClientByEmail(email)
+	if err != nil {
+		return nil, false, err
+	}
+	return client, true, nil
+}
+
+func (s *Store) userExists(email string) (bool, error) {
+	var exists bool
+	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE email=$1)`, email).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func (s *Store) createPasswordReset(email, tokenHash string, expiresAt time.Time) error {
+	if _, err := s.db.Exec(`DELETE FROM password_resets WHERE email=$1`, email); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`INSERT INTO password_resets (token_hash, email, expires_at) VALUES ($1, $2, $3)`, tokenHash, email, expiresAt)
+	return err
+}
+
+func (s *Store) resetUserPasswordWithToken(tokenHash, newPassword string) (*Client, bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback()
+
+	var email string
+	var expiresAt time.Time
+	var usedAt sql.NullTime
+	if err := tx.QueryRow(`SELECT email, expires_at, used_at FROM password_resets WHERE token_hash=$1 FOR UPDATE`, tokenHash).
+		Scan(&email, &expiresAt, &usedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if usedAt.Valid || time.Now().After(expiresAt) {
+		return nil, false, nil
+	}
+
+	hashed, err := hashPassword(newPassword)
+	if err != nil {
+		return nil, false, err
+	}
+	res, err := tx.Exec(`UPDATE users SET password=$1 WHERE email=$2`, hashed, email)
+	if err != nil {
+		return nil, false, err
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return nil, false, nil
+	}
+	if _, err := tx.Exec(`UPDATE password_resets SET used_at=NOW() WHERE token_hash=$1`, tokenHash); err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
 	}
 	client, err := s.getOrCreateClientByEmail(email)
 	if err != nil {
@@ -433,6 +632,218 @@ func normalizeEmail(raw string) (string, error) {
 	return email, nil
 }
 
+func adminUsername() string {
+	return strings.TrimSpace(os.Getenv("ADMIN_USERNAME"))
+}
+
+func adminPasswordHash() string {
+	return strings.TrimSpace(os.Getenv("ADMIN_PASSWORD_HASH"))
+}
+
+func adminPasswordPlain() string {
+	return strings.TrimSpace(os.Getenv("ADMIN_PASSWORD"))
+}
+
+func checkAdminCredentials(username, password string) bool {
+	if username == "" || password == "" {
+		return false
+	}
+	if expected := adminUsername(); expected == "" || expected != username {
+		return false
+	}
+	if hash := adminPasswordHash(); hash != "" {
+		return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+	}
+	plain := adminPasswordPlain()
+	return plain != "" && plain == password
+}
+
+func resetTokenTTL() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("RESET_TOKEN_TTL_MIN"))
+	if raw == "" {
+		return time.Hour
+	}
+	if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+		return time.Duration(v) * time.Minute
+	}
+	return time.Hour
+}
+
+func resetLinkBase() string {
+	return strings.TrimSpace(os.Getenv("RESET_LINK_BASE"))
+}
+
+func smtpTLSMode() string {
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("SMTP_TLS")))
+	if mode == "ssl" || mode == "starttls" || mode == "none" {
+		return mode
+	}
+	return "starttls"
+}
+
+func smtpTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("SMTP_TIMEOUT_SEC"))
+	if raw == "" {
+		return 10 * time.Second
+	}
+	if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+		return time.Duration(v) * time.Second
+	}
+	return 10 * time.Second
+}
+
+type smtpConfig struct {
+	Host    string
+	Port    int
+	User    string
+	Pass    string
+	From    string
+	TLSMode string
+}
+
+func smtpConfigFromEnv() (*smtpConfig, error) {
+	host := strings.TrimSpace(os.Getenv("SMTP_HOST"))
+	if host == "" {
+		return nil, errors.New("SMTP_HOST is required")
+	}
+	port := 587
+	if raw := strings.TrimSpace(os.Getenv("SMTP_PORT")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			port = v
+		}
+	}
+	user := strings.TrimSpace(os.Getenv("SMTP_USER"))
+	pass := strings.TrimSpace(os.Getenv("SMTP_PASS"))
+	from := strings.TrimSpace(os.Getenv("SMTP_FROM"))
+	if from == "" {
+		from = user
+	}
+	if from == "" {
+		return nil, errors.New("SMTP_FROM is required")
+	}
+	return &smtpConfig{
+		Host:    host,
+		Port:    port,
+		User:    user,
+		Pass:    pass,
+		From:    from,
+		TLSMode: smtpTLSMode(),
+	}, nil
+}
+
+func hashResetToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func newResetToken() (string, string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", "", err
+	}
+	token := hex.EncodeToString(buf)
+	return token, hashResetToken(token), nil
+}
+
+func buildResetLink(base, token string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return ""
+	}
+	if strings.Contains(base, "{token}") {
+		return strings.ReplaceAll(base, "{token}", url.QueryEscape(token))
+	}
+	if strings.HasSuffix(base, "token") {
+		return base + "=" + url.QueryEscape(token)
+	}
+	if strings.Contains(base, "token=") {
+		if strings.HasSuffix(base, "token=") {
+			return base + url.QueryEscape(token)
+		}
+		return base
+	}
+	sep := "?"
+	if strings.Contains(base, "?") {
+		sep = "&"
+	}
+	return base + sep + "token=" + url.QueryEscape(token)
+}
+
+func sendResetEmail(to, link string) error {
+	cfg, err := smtpConfigFromEnv()
+	if err != nil {
+		return err
+	}
+	subject := "Reset your Trumpus password"
+	body := fmt.Sprintf("Use this link to reset your password:\n\n%s\n\nIf you did not request this, ignore this email.", link)
+	return sendSMTPMail(cfg, to, subject, body)
+}
+
+func sendSMTPMail(cfg *smtpConfig, to, subject, body string) error {
+	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	timeout := smtpTimeout()
+	dialer := &net.Dialer{Timeout: timeout}
+	var client *smtp.Client
+	var err error
+	if cfg.TLSMode == "ssl" {
+		conn, err := tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{ServerName: cfg.Host})
+		if err != nil {
+			return err
+		}
+		_ = conn.SetDeadline(time.Now().Add(timeout))
+		client, err = smtp.NewClient(conn, cfg.Host)
+		if err != nil {
+			return err
+		}
+	} else {
+		conn, err := dialer.Dial("tcp", addr)
+		if err != nil {
+			return err
+		}
+		_ = conn.SetDeadline(time.Now().Add(timeout))
+		client, err = smtp.NewClient(conn, cfg.Host)
+		if err != nil {
+			return err
+		}
+	}
+	defer client.Close()
+	if cfg.TLSMode == "starttls" {
+		if err := client.StartTLS(&tls.Config{ServerName: cfg.Host}); err != nil {
+			return err
+		}
+	}
+	if cfg.User != "" || cfg.Pass != "" {
+		if err := client.Auth(smtp.PlainAuth("", cfg.User, cfg.Pass, cfg.Host)); err != nil {
+			return err
+		}
+	}
+	if err := client.Mail(cfg.From); err != nil {
+		return err
+	}
+	if err := client.Rcpt(to); err != nil {
+		return err
+	}
+	writer, err := client.Data()
+	if err != nil {
+		return err
+	}
+	msg := fmt.Sprintf(
+		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
+		cfg.From,
+		to,
+		subject,
+		body,
+	)
+	if _, err := writer.Write([]byte(msg)); err != nil {
+		_ = writer.Close()
+		return err
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+	return client.Quit()
+}
+
 func validatePassword(pw string) error {
 	pw = strings.TrimSpace(pw)
 	if len(pw) < minPasswordLen || len(pw) > maxPasswordLen {
@@ -488,6 +899,77 @@ func jwtSecret() ([]byte, error) {
 	return []byte(secret), nil
 }
 
+func cookieSecure() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("COOKIE_SECURE")), "true")
+}
+
+func cookieDomain() string {
+	return strings.TrimSpace(os.Getenv("COOKIE_DOMAIN"))
+}
+
+func setCookie(w http.ResponseWriter, name, value string, exp time.Time) {
+	maxAge := int(time.Until(exp).Seconds())
+	if maxAge < 0 {
+		maxAge = 0
+	}
+	cookie := &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   cookieSecure(),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   maxAge,
+		Expires:  exp,
+	}
+	if domain := cookieDomain(); domain != "" {
+		cookie.Domain = domain
+	}
+	http.SetCookie(w, cookie)
+}
+
+func clearCookieValue(w http.ResponseWriter, name string) {
+	cookie := &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   cookieSecure(),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	}
+	if domain := cookieDomain(); domain != "" {
+		cookie.Domain = domain
+	}
+	http.SetCookie(w, cookie)
+}
+
+func setAuthCookies(w http.ResponseWriter, access, refresh string, accessExp, refreshExp time.Time) {
+	setCookie(w, "access_token", access, accessExp)
+	setCookie(w, "refresh_token", refresh, refreshExp)
+}
+
+func clearAuthCookies(w http.ResponseWriter) {
+	clearCookieValue(w, "access_token")
+	clearCookieValue(w, "refresh_token")
+}
+
+func setAdminCookie(w http.ResponseWriter, token string, exp time.Time) {
+	setCookie(w, "admin_token", token, exp)
+}
+
+func clearAdminCookie(w http.ResponseWriter) {
+	clearCookieValue(w, "admin_token")
+}
+
+func readCookieValue(r *http.Request, name string) string {
+	c, err := r.Cookie(name)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Value)
+}
+
 func accessTTL() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("JWT_ACCESS_TTL_MIN"))
 	if raw == "" {
@@ -510,6 +992,17 @@ func refreshTTL() time.Duration {
 	return time.Duration(defaultRefreshTTLDays) * 24 * time.Hour
 }
 
+func adminTokenTTL() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("ADMIN_TOKEN_TTL_HOURS"))
+	if raw == "" {
+		return time.Duration(defaultAdminTTlHours) * time.Hour
+	}
+	if v, err := time.ParseDuration(raw + "h"); err == nil {
+		return v
+	}
+	return time.Duration(defaultAdminTTlHours) * time.Hour
+}
+
 func issueTokens(clientID, email string) (string, string, time.Time, time.Time, error) {
 	secret, err := jwtSecret()
 	if err != nil {
@@ -520,18 +1013,18 @@ func issueTokens(clientID, email string) (string, string, time.Time, time.Time, 
 	refreshExp := now.Add(refreshTTL())
 
 	accessClaims := jwt.MapClaims{
-		"sub":  clientID,
+		"sub":   clientID,
 		"email": email,
-		"typ":  "access",
-		"iat":  now.Unix(),
-		"exp":  accessExp.Unix(),
+		"typ":   "access",
+		"iat":   now.Unix(),
+		"exp":   accessExp.Unix(),
 	}
 	refreshClaims := jwt.MapClaims{
-		"sub":  clientID,
+		"sub":   clientID,
 		"email": email,
-		"typ":  "refresh",
-		"iat":  now.Unix(),
-		"exp":  refreshExp.Unix(),
+		"typ":   "refresh",
+		"iat":   now.Unix(),
+		"exp":   refreshExp.Unix(),
 	}
 	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims).SignedString(secret)
 	if err != nil {
@@ -542,6 +1035,26 @@ func issueTokens(clientID, email string) (string, string, time.Time, time.Time, 
 		return "", "", time.Time{}, time.Time{}, err
 	}
 	return accessToken, refreshToken, accessExp, refreshExp, nil
+}
+
+func issueAdminToken(username string) (string, time.Time, error) {
+	secret, err := jwtSecret()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	now := time.Now()
+	exp := now.Add(adminTokenTTL())
+	claims := jwt.MapClaims{
+		"sub": username,
+		"typ": "admin",
+		"iat": now.Unix(),
+		"exp": exp.Unix(),
+	}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(secret)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return token, exp, nil
 }
 
 func parseToken(tokenStr, expectedType string) (jwt.MapClaims, error) {
@@ -579,9 +1092,14 @@ func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		allowed := isOriginAllowed(origin)
+		if origin != "" && !allowed {
+			writeJSON(w, http.StatusForbidden, jsonMap{"error": "forbidden"})
+			return
+		}
 		if allowed {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 		} else if origin == "" {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
@@ -619,13 +1137,19 @@ func rateLimitPerMinute() int {
 	return defaultRateLimitPerMin
 }
 
+func trustProxy() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("TRUST_PROXY")), "true")
+}
+
 func clientIP(r *http.Request) string {
-	if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
-		parts := strings.Split(xf, ",")
-		return strings.TrimSpace(parts[0])
-	}
-	if xr := r.Header.Get("X-Real-IP"); xr != "" {
-		return strings.TrimSpace(xr)
+	if trustProxy() {
+		if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
+			parts := strings.Split(xf, ",")
+			return strings.TrimSpace(parts[0])
+		}
+		if xr := r.Header.Get("X-Real-IP"); xr != "" {
+			return strings.TrimSpace(xr)
+		}
 	}
 	host := r.RemoteAddr
 	if idx := strings.LastIndex(host, ":"); idx != -1 {
@@ -664,7 +1188,7 @@ func withRateLimit(next http.HandlerFunc) http.HandlerFunc {
 func isOriginAllowed(origin string) bool {
 	raw := strings.TrimSpace(os.Getenv("CORS_ORIGINS"))
 	if raw == "" {
-		return true
+		return origin == ""
 	}
 	parts := strings.Split(raw, ",")
 	for _, p := range parts {
@@ -686,10 +1210,39 @@ func max(a, b int) int {
 	return b
 }
 
+func bearerToken(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(raw), "bearer ") {
+		return strings.TrimSpace(raw[7:])
+	}
+	return raw
+}
+
+func clientTokenFromRequest(r *http.Request) string {
+	if token := bearerToken(r.Header.Get("Authorization")); token != "" {
+		return token
+	}
+	return readCookieValue(r, "access_token")
+}
+
+func adminTokenFromRequest(r *http.Request) string {
+	if token := bearerToken(r.Header.Get("Authorization")); token != "" {
+		return token
+	}
+	return readCookieValue(r, "admin_token")
+}
+
 func requireAdminAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer"))
-		if token != "admin-token" {
+		token := adminTokenFromRequest(r)
+		if token == "" {
+			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
+			return
+		}
+		if _, err := parseToken(token, "admin"); err != nil {
 			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 			return
 		}
@@ -704,7 +1257,7 @@ func requireClientAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 			return
 		}
-		token := strings.TrimSpace(strings.TrimPrefix(raw, "Bearer"))
+		token := clientTokenFromRequest(r)
 		if token == "" {
 			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 			return
@@ -724,6 +1277,280 @@ func requireClientAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func redisURL() string {
+	return strings.TrimSpace(os.Getenv("REDIS_URL"))
+}
+
+func llmStreamName() string {
+	if v := strings.TrimSpace(os.Getenv("LLM_QUEUE_STREAM")); v != "" {
+		return v
+	}
+	return "llm_jobs"
+}
+
+func llmGroupName() string {
+	if v := strings.TrimSpace(os.Getenv("LLM_QUEUE_GROUP")); v != "" {
+		return v
+	}
+	return "llm_workers"
+}
+
+func eventChannelName() string {
+	if v := strings.TrimSpace(os.Getenv("CHAT_EVENT_CHANNEL")); v != "" {
+		return v
+	}
+	return "chat_events"
+}
+
+func initRedis() (*redis.Client, error) {
+	url := redisURL()
+	if url == "" {
+		return nil, nil
+	}
+	opts, err := redis.ParseURL(url)
+	if err != nil {
+		return nil, err
+	}
+	client := redis.NewClient(opts)
+	if err := client.Ping(context.Background()).Err(); err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
+func publishEvent(evt ChatEvent) {
+	if hub == nil {
+		return
+	}
+	if rdb == nil {
+		hub.broadcast(evt)
+		return
+	}
+	payload, err := json.Marshal(evt)
+	if err != nil {
+		return
+	}
+	_ = rdb.Publish(context.Background(), eventChannelName(), payload).Err()
+}
+
+func startEventSubscriber(ctx context.Context) {
+	if rdb == nil || hub == nil {
+		return
+	}
+	pubsub := rdb.Subscribe(ctx, eventChannelName())
+	go func() {
+		defer pubsub.Close()
+		ch := pubsub.Channel()
+		for {
+			select {
+			case msg, ok := <-ch:
+				if !ok {
+					return
+				}
+				var evt ChatEvent
+				if err := json.Unmarshal([]byte(msg.Payload), &evt); err != nil {
+					continue
+				}
+				hub.broadcast(evt)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func enqueueLLMJob(job LLMJob) error {
+	if rdb == nil {
+		return fmt.Errorf("redis not configured")
+	}
+	payload, err := json.Marshal(job)
+	if err != nil {
+		return err
+	}
+	return rdb.XAdd(context.Background(), &redis.XAddArgs{
+		Stream: llmStreamName(),
+		Values: map[string]any{"job": string(payload)},
+	}).Err()
+}
+
+func processLLMJob(job LLMJob) error {
+	chat, err := store.getChatByID(job.ChatID)
+	if err != nil {
+		return err
+	}
+	if chat == nil {
+		return fmt.Errorf("chat not found")
+	}
+	llmBase := os.Getenv("LLM_BASE")
+	resp, status, body, err := callLLM(llmBase, job.ChatID, job.Persona, job.Content)
+	if err != nil || strings.TrimSpace(resp) == "" {
+		log.Printf("llm_error req_id=%s chat_id=%s status=%d err=%v body=%s", job.RequestID, job.ChatID, status, err, body)
+		time.Sleep(2 * time.Second)
+		resp, status, body, err = callLLM(llmBase, job.ChatID, job.Persona, job.Content)
+	}
+	if err != nil || strings.TrimSpace(resp) == "" {
+		log.Printf("llm_error_final req_id=%s chat_id=%s status=%d err=%v body=%s", job.RequestID, job.ChatID, status, err, body)
+		resp = "LLM is busy, try later."
+	}
+	if last, err := store.getLastAdminMessage(job.ChatID); err == nil && last != nil {
+		if last.Content == resp {
+			return nil
+		}
+	}
+	reply, err := store.insertMessage(job.ChatID, "admin", resp, time.Now())
+	if err != nil {
+		return err
+	}
+	_ = store.updateChatLastMessage(job.ChatID, reply.CreatedAt)
+	updatedChat, err := store.getChatByID(job.ChatID)
+	if err == nil && updatedChat != nil {
+		chat = updatedChat
+	}
+	publishEvent(ChatEvent{
+		Type:           "message_created",
+		ChatID:         job.ChatID,
+		ClientID:       chat.ClientID,
+		Message:        reply,
+		UnreadForAdmin: chat.UnreadForAdmin,
+		LastMessageAt:  reply.CreatedAt.Format(time.RFC3339),
+	})
+	return nil
+}
+
+func runWorker(ctx context.Context) error {
+	if rdb == nil {
+		return fmt.Errorf("redis not configured")
+	}
+	group := llmGroupName()
+	stream := llmStreamName()
+	consumer := fmt.Sprintf("worker-%s", nextID("c"))
+	if err := rdb.XGroupCreateMkStream(ctx, stream, group, "$").Err(); err != nil {
+		if !strings.Contains(err.Error(), "BUSYGROUP") {
+			return err
+		}
+	}
+	for {
+		res, err := rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+			Group:    group,
+			Consumer: consumer,
+			Streams:  []string{stream, ">"},
+			Count:    1,
+			Block:    5 * time.Second,
+		}).Result()
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			continue
+		}
+		for _, streamRes := range res {
+			for _, msg := range streamRes.Messages {
+				payload, _ := msg.Values["job"].(string)
+				var job LLMJob
+				if err := json.Unmarshal([]byte(payload), &job); err != nil {
+					_ = rdb.XAck(ctx, stream, group, msg.ID).Err()
+					continue
+				}
+				if err := processLLMJob(job); err != nil {
+					job.Attempts++
+					if job.Attempts <= 3 {
+						_ = enqueueLLMJob(job)
+					}
+				}
+				_ = rdb.XAck(ctx, stream, group, msg.ID).Err()
+			}
+		}
+	}
+}
+
+func handleWS(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if origin != "" && !isOriginAllowed(origin) {
+		writeJSON(w, http.StatusForbidden, jsonMap{"error": "forbidden"})
+		return
+	}
+	if hub == nil {
+		writeJSON(w, http.StatusServiceUnavailable, jsonMap{"error": "ws_not_ready"})
+		return
+	}
+	chatID := strings.TrimSpace(r.URL.Query().Get("chat_id"))
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+
+	isAdmin := false
+	clientID := ""
+	if adminToken := adminTokenFromRequest(r); adminToken != "" {
+		if _, err := parseToken(adminToken, "admin"); err == nil {
+			isAdmin = true
+		}
+	}
+	if !isAdmin {
+		token := clientTokenFromRequest(r)
+		if token == "" {
+			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
+			return
+		}
+		claims, err := parseToken(token, "access")
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
+			return
+		}
+		clientID, _ = claims["sub"].(string)
+		if clientID == "" {
+			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
+			return
+		}
+	}
+
+	if isAdmin {
+		if scope != "all" && chatID == "" {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "chat_id required"})
+			return
+		}
+	} else {
+		if scope == "client" {
+			// ok
+		} else if chatID == "" {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "chat_id required"})
+			return
+		} else {
+			chat, err := store.getChatByID(chatID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+				return
+			}
+			if chat == nil || chat.ClientID != clientID {
+				writeJSON(w, http.StatusForbidden, jsonMap{"error": "forbidden"})
+				return
+			}
+		}
+	}
+
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		CompressionMode: websocket.CompressionDisabled,
+	})
+	if err != nil {
+		return
+	}
+	client := &wsClient{
+		conn:     conn,
+		chatID:   chatID,
+		clientID: clientID,
+		adminAll: isAdmin && scope == "all",
+	}
+	hub.addClient(client)
+
+	go func() {
+		defer func() {
+			hub.removeClient(client)
+			_ = conn.Close(websocket.StatusNormalClosure, "")
+		}()
+		for {
+			if _, _, err := conn.Read(context.Background()); err != nil {
+				return
+			}
+		}
+	}()
+}
 
 const (
 	googleStateCookie    = "google_oauth_state"
@@ -732,15 +1559,19 @@ const (
 )
 
 func setSecureCookie(w http.ResponseWriter, name, value string) {
-	http.SetCookie(w, &http.Cookie{
+	cookie := &http.Cookie{
 		Name:     name,
 		Value:    url.QueryEscape(value),
 		Path:     "/",
 		MaxAge:   googleCookieMaxAge,
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   cookieSecure(),
 		SameSite: http.SameSiteLaxMode,
-	})
+	}
+	if domain := cookieDomain(); domain != "" {
+		cookie.Domain = domain
+	}
+	http.SetCookie(w, cookie)
 }
 
 func readSecureCookie(r *http.Request, name string) string {
@@ -756,15 +1587,19 @@ func readSecureCookie(r *http.Request, name string) string {
 }
 
 func clearCookie(w http.ResponseWriter, name string) {
-	http.SetCookie(w, &http.Cookie{
+	cookie := &http.Cookie{
 		Name:     name,
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   cookieSecure(),
 		SameSite: http.SameSiteLaxMode,
-	})
+	}
+	if domain := cookieDomain(); domain != "" {
+		cookie.Domain = domain
+	}
+	http.SetCookie(w, cookie)
 }
 
 type googleConfig struct {
@@ -781,15 +1616,22 @@ func handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RefreshToken string `json:"refresh_token"`
 	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
-		return
+	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if len(strings.TrimSpace(string(body))) > 0 {
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
+			return
+		}
 	}
-	if strings.TrimSpace(req.RefreshToken) == "" {
+	refreshToken := strings.TrimSpace(req.RefreshToken)
+	if refreshToken == "" {
+		refreshToken = readCookieValue(r, "refresh_token")
+	}
+	if refreshToken == "" {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "refresh token required"})
 		return
 	}
-	claims, err := parseToken(req.RefreshToken, "refresh")
+	claims, err := parseToken(refreshToken, "refresh")
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "invalid refresh token"})
 		return
@@ -805,12 +1647,72 @@ func handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
 	}
+	setAuthCookies(w, access, refresh, accessExp, refreshExp)
 	writeJSON(w, http.StatusOK, jsonMap{
-		"access_token":  access,
-		"refresh_token": refresh,
-		"access_expires": accessExp.Format(time.RFC3339),
+		"access_token":    access,
+		"refresh_token":   refresh,
+		"access_expires":  accessExp.Format(time.RFC3339),
 		"refresh_expires": refreshExp.Format(time.RFC3339),
 	})
+}
+
+func handleClientSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
+		return
+	}
+	token := clientTokenFromRequest(r)
+	if token == "" {
+		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
+		return
+	}
+	claims, err := parseToken(token, "access")
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
+		return
+	}
+	clientID, _ := claims["sub"].(string)
+	email, _ := claims["email"].(string)
+	if clientID == "" || email == "" {
+		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
+		return
+	}
+	writeJSON(w, http.StatusOK, jsonMap{"client_id": clientID, "email": email})
+}
+
+func handleClientLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
+		return
+	}
+	clearAuthCookies(w)
+	writeJSON(w, http.StatusOK, jsonMap{"ok": true})
+}
+
+func handleAdminSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
+		return
+	}
+	token := adminTokenFromRequest(r)
+	if token == "" {
+		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
+		return
+	}
+	if _, err := parseToken(token, "admin"); err != nil {
+		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
+		return
+	}
+	writeJSON(w, http.StatusOK, jsonMap{"ok": true})
+}
+
+func handleAdminLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
+		return
+	}
+	clearAdminCookie(w)
+	writeJSON(w, http.StatusOK, jsonMap{"ok": true})
 }
 
 func main() {
@@ -818,6 +1720,7 @@ func main() {
 	if port == "" {
 		port = "8000"
 	}
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("RUN_MODE")))
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		log.Fatal("DATABASE_URL is required")
@@ -826,6 +1729,20 @@ func main() {
 	store, err = newStore(dsn)
 	if err != nil {
 		log.Fatalf("failed to init db: %v", err)
+	}
+	rdb, err = initRedis()
+	if err != nil {
+		log.Fatalf("failed to init redis: %v", err)
+	}
+	hub = newWSHub()
+	ctx := context.Background()
+	startEventSubscriber(ctx)
+	if mode == "worker" {
+		log.Print("llm worker started")
+		if err := runWorker(ctx); err != nil {
+			log.Fatalf("worker error: %v", err)
+		}
+		return
 	}
 
 	googleCfg := googleConfig{
@@ -849,14 +1766,19 @@ func main() {
 	mux.HandleFunc("/api/v1/auth/google/callback", handleGoogleCallback(googleCfg))
 	mux.HandleFunc("/api/v1/auth/google/mobile", wrap(handleGoogleMobile(googleCfg)))
 	mux.HandleFunc("/api/v1/auth/refresh", wrap(handleAuthRefresh))
+	mux.HandleFunc("/api/v1/auth/session", wrap(handleClientSession))
+	mux.HandleFunc("/api/v1/auth/logout", wrap(handleClientLogout))
 
 	mux.HandleFunc("/api/v1/admin/login", wrap(handleAdminLogin))
+	mux.HandleFunc("/api/v1/admin/session", wrap(handleAdminSession))
+	mux.HandleFunc("/api/v1/admin/logout", wrap(handleAdminLogout))
 	mux.HandleFunc("/api/v1/admin/clients", wrap(requireAdminAuth(handleAdminClients)))
 	mux.HandleFunc("/api/v1/admin/chats", wrap(requireAdminAuth(handleAdminChats)))
 	mux.HandleFunc("/api/v1/admin/chats/", wrap(requireAdminAuth(handleAdminChatRoutes)))
 
 	mux.HandleFunc("/api/v1/clients/", wrap(requireClientAuth(handleClientRoutes)))
 	mux.HandleFunc("/api/v1/chats/", wrap(requireClientAuth(handleChatRoutes)))
+	mux.HandleFunc("/api/v1/ws", handleWS)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
@@ -899,6 +1821,52 @@ func callLLM(baseURL, chatID, persona, content string) (string, int, string, err
 	return resp.Content, res.StatusCode, string(respBody), nil
 }
 
+func redirectAllowlist() []string {
+	raw := strings.TrimSpace(os.Getenv("OAUTH_REDIRECT_ALLOWLIST"))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		v := strings.TrimSpace(p)
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func isRedirectAllowed(redirect string) bool {
+	redirect = strings.TrimSpace(redirect)
+	if redirect == "" {
+		return false
+	}
+	u, err := url.Parse(redirect)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return false
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return false
+	}
+	allowed := redirectAllowlist()
+	if len(allowed) == 0 {
+		return false
+	}
+	origin := strings.ToLower(u.Scheme + "://" + u.Host)
+	for _, item := range allowed {
+		allowedURL, err := url.Parse(item)
+		if err != nil || allowedURL.Scheme == "" || allowedURL.Host == "" {
+			continue
+		}
+		allowedOrigin := strings.ToLower(allowedURL.Scheme + "://" + allowedURL.Host)
+		if origin == allowedOrigin {
+			return true
+		}
+	}
+	return false
+}
+
 func handleGoogleStart(cfg googleConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if cfg.ClientID == "" || cfg.ClientSecret == "" || cfg.CallbackURL == "" {
@@ -911,8 +1879,12 @@ func handleGoogleStart(cfg googleConfig) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "redirect required"})
 			return
 		}
+		if !isRedirectAllowed(redirect) {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "redirect not allowed"})
+			return
+		}
 
-		log.Printf("google_start redirect=%s", redirect)
+		log.Printf("google_start")
 
 		state := nextID("state")
 		setSecureCookie(w, googleStateCookie, state)
@@ -980,6 +1952,10 @@ func handleGoogleCallback(cfg googleConfig) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "redirect required"})
 			return
 		}
+		if !isRedirectAllowed(redirectStr) {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "redirect not allowed"})
+			return
+		}
 
 		tokenData, err := exchangeGoogleCode(code, cfg)
 		if err != nil {
@@ -1005,20 +1981,12 @@ func handleGoogleCallback(cfg googleConfig) http.HandlerFunc {
 			return
 		}
 
-		// For web redirect, return tokens in query params (MVP).
 		redirectURL, err := url.Parse(redirectStr)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid redirect"})
 			return
 		}
-		q := redirectURL.Query()
-		q.Set("access_token", access)
-		q.Set("refresh_token", refresh)
-		q.Set("access_expires", accessExp.Format(time.RFC3339))
-		q.Set("refresh_expires", refreshExp.Format(time.RFC3339))
-		q.Set("email", userInfo.Email)
-		q.Set("client_id", client.ID)
-		redirectURL.RawQuery = q.Encode()
+		setAuthCookies(w, access, refresh, accessExp, refreshExp)
 		http.Redirect(w, r, redirectURL.String(), http.StatusFound)
 	}
 }
@@ -1043,7 +2011,7 @@ func exchangeGoogleCode(code string, cfg googleConfig) (*googleTokenResponse, er
 	}
 	defer res.Body.Close()
 	body, _ := io.ReadAll(res.Body)
-	log.Printf("google_token_exchange status=%d body=%s", res.StatusCode, strings.TrimSpace(string(body)))
+	log.Printf("google_token_exchange status=%d", res.StatusCode)
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return nil, fmt.Errorf("token exchange failed")
 	}
@@ -1068,7 +2036,7 @@ func fetchGoogleUserInfo(accessToken string) (*googleUserInfo, error) {
 	}
 	defer res.Body.Close()
 	body, _ := io.ReadAll(res.Body)
-	log.Printf("google_userinfo status=%d body=%s", res.StatusCode, strings.TrimSpace(string(body)))
+	log.Printf("google_userinfo status=%d", res.StatusCode)
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return nil, fmt.Errorf("userinfo failed")
 	}
@@ -1135,12 +2103,12 @@ func handleGoogleMobile(cfg googleConfig) http.HandlerFunc {
 		}
 
 		writeJSON(w, http.StatusOK, jsonMap{
-			"access_token":  access,
-			"refresh_token": refresh,
-			"access_expires": accessExp.Format(time.RFC3339),
+			"access_token":    access,
+			"refresh_token":   refresh,
+			"access_expires":  accessExp.Format(time.RFC3339),
 			"refresh_expires": refreshExp.Format(time.RFC3339),
-			"email":         email,
-			"client_id":     client.ID,
+			"email":           email,
+			"client_id":       client.ID,
 		})
 	}
 }
@@ -1181,12 +2149,17 @@ func handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Username != "admin" || req.Password != "showme123" {
+	if !checkAdminCredentials(req.Username, req.Password) {
 		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "invalid credentials"})
 		return
 	}
-
-	writeJSON(w, http.StatusOK, jsonMap{"token": "admin-token"})
+	token, exp, err := issueAdminToken(req.Username)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	setAdminCookie(w, token, exp)
+	writeJSON(w, http.StatusOK, jsonMap{"ok": true})
 }
 
 func handleClientLogin(w http.ResponseWriter, r *http.Request) {
@@ -1225,13 +2198,14 @@ func handleClientLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
 	}
+	setAuthCookies(w, access, refresh, accessExp, refreshExp)
 	writeJSON(w, http.StatusOK, jsonMap{
-		"access_token":  access,
-		"refresh_token": refresh,
-		"access_expires": accessExp.Format(time.RFC3339),
+		"access_token":    access,
+		"refresh_token":   refresh,
+		"access_expires":  accessExp.Format(time.RFC3339),
 		"refresh_expires": refreshExp.Format(time.RFC3339),
-		"email":         email,
-		"client_id":     client.ID,
+		"email":           email,
+		"client_id":       client.ID,
 	})
 }
 
@@ -1271,13 +2245,14 @@ func handleClientRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
 	}
+	setAuthCookies(w, access, refresh, accessExp, refreshExp)
 	writeJSON(w, http.StatusOK, jsonMap{
-		"access_token":  access,
-		"refresh_token": refresh,
-		"access_expires": accessExp.Format(time.RFC3339),
+		"access_token":    access,
+		"refresh_token":   refresh,
+		"access_expires":  accessExp.Format(time.RFC3339),
 		"refresh_expires": refreshExp.Format(time.RFC3339),
-		"email":         email,
-		"client_id":     client.ID,
+		"email":           email,
+		"client_id":       client.ID,
 	})
 }
 
@@ -1293,8 +2268,42 @@ func handleClientForgot(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
 		return
 	}
-	if _, err := normalizeEmail(req.Email); err != nil {
+	email, err := normalizeEmail(req.Email)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid email"})
+		return
+	}
+	exists, err := store.userExists(email)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if !exists {
+		writeJSON(w, http.StatusOK, jsonMap{"sent": true})
+		return
+	}
+	base := resetLinkBase()
+	if base == "" {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "reset link not configured"})
+		return
+	}
+	token, tokenHash, err := newResetToken()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	expiresAt := time.Now().Add(resetTokenTTL())
+	if err := store.createPasswordReset(email, tokenHash, expiresAt); err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	link := buildResetLink(base, token)
+	if link == "" {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "reset link not configured"})
+		return
+	}
+	if err := sendResetEmail(email, link); err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "email send failed"})
 		return
 	}
 	writeJSON(w, http.StatusOK, jsonMap{"sent": true})
@@ -1309,25 +2318,34 @@ func handleClientReset(w http.ResponseWriter, r *http.Request) {
 		Email       string `json:"email"`
 		OldPassword string `json:"old_password"`
 		NewPassword string `json:"new_password"`
+		Token       string `json:"token"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
-		return
-	}
-	email, err := normalizeEmail(req.Email)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid email"})
-		return
-	}
-	if err := validatePassword(req.OldPassword); err != nil {
-		writeJSON(w, http.StatusBadRequest, jsonMap{"error": err.Error()})
 		return
 	}
 	if err := validatePassword(req.NewPassword); err != nil {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": err.Error()})
 		return
 	}
-	client, ok, err := store.resetUserPassword(email, req.OldPassword, req.NewPassword)
+	var client *Client
+	var ok bool
+	var err error
+	if strings.TrimSpace(req.Token) != "" {
+		token := strings.TrimSpace(req.Token)
+		client, ok, err = store.resetUserPasswordWithToken(hashResetToken(token), req.NewPassword)
+	} else {
+		email, err := normalizeEmail(req.Email)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid email"})
+			return
+		}
+		if err := validatePassword(req.OldPassword); err != nil {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": err.Error()})
+			return
+		}
+		client, ok, err = store.resetUserPassword(email, req.OldPassword, req.NewPassword)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
@@ -1336,18 +2354,31 @@ func handleClientReset(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "invalid credentials"})
 		return
 	}
+	email := ""
+	if strings.TrimSpace(req.Token) != "" {
+		if client != nil {
+			email = client.Name
+		}
+	} else {
+		email, _ = normalizeEmail(req.Email)
+	}
+	if email == "" {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
 	access, refresh, accessExp, refreshExp, err := issueTokens(client.ID, email)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
 	}
+	setAuthCookies(w, access, refresh, accessExp, refreshExp)
 	writeJSON(w, http.StatusOK, jsonMap{
-		"access_token":  access,
-		"refresh_token": refresh,
-		"access_expires": accessExp.Format(time.RFC3339),
+		"access_token":    access,
+		"refresh_token":   refresh,
+		"access_expires":  accessExp.Format(time.RFC3339),
 		"refresh_expires": refreshExp.Format(time.RFC3339),
-		"email":         email,
-		"client_id":     client.ID,
+		"email":           email,
+		"client_id":       client.ID,
 	})
 }
 
@@ -1530,6 +2561,14 @@ func handleAdminSendMessage(w http.ResponseWriter, r *http.Request, chatID strin
 		return
 	}
 	_ = store.updateChatLastMessage(chatID, msg.CreatedAt)
+	publishEvent(ChatEvent{
+		Type:           "message_created",
+		ChatID:         chatID,
+		ClientID:       chat.ClientID,
+		Message:        msg,
+		UnreadForAdmin: chat.UnreadForAdmin,
+		LastMessageAt:  msg.CreatedAt.Format(time.RFC3339),
+	})
 
 	writeJSON(w, http.StatusCreated, msg)
 }
@@ -1545,6 +2584,13 @@ func handleAdminMarkRead(w http.ResponseWriter, r *http.Request, chatID string) 
 		return
 	}
 	_ = store.updateChatUnread(chatID, 0)
+	publishEvent(ChatEvent{
+		Type:           "chat_updated",
+		ChatID:         chatID,
+		ClientID:       chat.ClientID,
+		UnreadForAdmin: 0,
+		LastMessageAt:  chat.LastMessageAt.Format(time.RFC3339),
+	})
 	writeJSON(w, http.StatusOK, jsonMap{"ok": true})
 }
 
@@ -1734,6 +2780,14 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 	if strings.TrimSpace(chat.Title) == "" {
 		_ = store.updateChatTitle(chatID, firstLine(content, 60))
 	}
+	publishEvent(ChatEvent{
+		Type:           "message_created",
+		ChatID:         chatID,
+		ClientID:       chat.ClientID,
+		Message:        msg,
+		UnreadForAdmin: chat.UnreadForAdmin + 1,
+		LastMessageAt:  msg.CreatedAt.Format(time.RFC3339),
+	})
 
 	writeJSON(w, http.StatusCreated, msg)
 	log.Printf("chat_send req_id=%s chat_id=%s sender=client latency_ms=%d", reqID, chatID, time.Since(start).Milliseconds())
@@ -1744,30 +2798,20 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 			persona = p
 		}
 	}
-	llmBase := os.Getenv("LLM_BASE")
-	go func(chatID, persona, content, requestID string) {
-		resp, status, body, err := callLLM(llmBase, chatID, persona, content)
-		if err != nil || strings.TrimSpace(resp) == "" {
-			log.Printf("llm_error req_id=%s chat_id=%s status=%d err=%v body=%s", requestID, chatID, status, err, body)
-			time.Sleep(2 * time.Second)
-			resp, status, body, err = callLLM(llmBase, chatID, persona, content)
-		}
-		if err != nil || strings.TrimSpace(resp) == "" {
-			log.Printf("llm_error_final req_id=%s chat_id=%s status=%d err=%v body=%s", requestID, chatID, status, err, body)
-			resp = "LLM is busy, try later."
-		}
-		if last, err := store.getLastAdminMessage(chatID); err == nil && last != nil {
-			if last.Content == resp {
-				return
+	job := LLMJob{
+		ChatID:    chatID,
+		Persona:   persona,
+		Content:   content,
+		RequestID: reqID,
+		Attempts:  0,
+	}
+	if err := enqueueLLMJob(job); err != nil {
+		go func(j LLMJob) {
+			if err := processLLMJob(j); err != nil {
+				log.Printf("llm_store_error req_id=%s chat_id=%s err=%v", j.RequestID, j.ChatID, err)
 			}
-		}
-		reply, err := store.insertMessage(chatID, "admin", resp, time.Now())
-		if err != nil {
-			log.Printf("llm_store_error req_id=%s chat_id=%s err=%v", requestID, chatID, err)
-			return
-		}
-		_ = store.updateChatLastMessage(chatID, reply.CreatedAt)
-	}(chatID, persona, content, reqID)
+		}(job)
+	}
 }
 
 func firstLine(text string, max int) string {

@@ -15,12 +15,30 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.trumpus"
+      "bundleIdentifier": "com.trumpus",
+      "associatedDomains": [
+        "applinks:trumpus.tech"
+      ]
     },
     "android": {
       "package": "com.trumpus",
       "versionCode": 1,
       "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "https",
+              "host": "trumpus.tech",
+              "pathPrefix": "/reset"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ],
+          "autoVerify": true
+        },
         {
           "action": "VIEW",
           "data": [

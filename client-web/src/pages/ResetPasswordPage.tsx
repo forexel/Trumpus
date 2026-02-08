@@ -1,27 +1,25 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { resetPassword } from '../lib/api'
+import { resetPassword, resetPasswordWithOld } from '../lib/api'
 
 export default function ResetPasswordPage() {
+  const [emailInput, setEmailInput] = useState(() => localStorage.getItem('client_email') || '')
   const [oldPass, setOldPass] = useState('')
   const [newPass, setNewPass] = useState('')
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
-  const email = useMemo(() => {
+  const token = useMemo(() => {
     const params = new URLSearchParams(window.location.search)
-    return params.get('email') || localStorage.getItem('client_email') || ''
+    return params.get('token') || ''
   }, [])
+  const hasToken = Boolean(token)
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (!email) {
-      setError('Email is missing')
-      return
-    }
-    if (!oldPass || !newPass || !confirm) {
+    if (!newPass || !confirm || (!hasToken && (!emailInput || !oldPass))) {
       setError('Fill all fields')
       return
     }
@@ -31,14 +29,10 @@ export default function ResetPasswordPage() {
     }
     try {
       setLoading(true)
-      const data = await resetPassword(email, oldPass, newPass)
-      if (data.access_token && data.refresh_token) {
-        localStorage.setItem('access_token', data.access_token)
-        localStorage.setItem('refresh_token', data.refresh_token)
-        if (data.access_expires) localStorage.setItem('access_expires', data.access_expires)
-      }
-      localStorage.setItem('client_email', data.email)
-      localStorage.setItem('client_id', data.client_id)
+      const data = hasToken
+        ? await resetPassword(token, newPass)
+        : await resetPasswordWithOld(emailInput, oldPass, newPass)
+      void data
       navigate('/chats')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Reset failed')
@@ -55,13 +49,23 @@ export default function ResetPasswordPage() {
         <div className="auth-card">
           <h1>Restore password</h1>
           <form onSubmit={onSubmit} className="form">
-            <label>Old password</label>
-            <input
-              type="password"
-              value={oldPass}
-              onChange={(e) => setOldPass(e.target.value)}
-              placeholder="Enter your password"
-            />
+            {!hasToken ? (
+              <>
+                <label>E-mail</label>
+                <input
+                  value={emailInput}
+                  onChange={(e) => setEmailInput(e.target.value)}
+                  placeholder="mail@gmail.com"
+                />
+                <label>Old password</label>
+                <input
+                  type="password"
+                  value={oldPass}
+                  onChange={(e) => setOldPass(e.target.value)}
+                  placeholder="Enter your password"
+                />
+              </>
+            ) : null}
             <label>New password</label>
             <input
               type="password"
