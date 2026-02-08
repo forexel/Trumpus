@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useState } from 'react';
 import AuthLayout from './AuthLayout';
 import { API_BASE_URL } from '../config';
-import { saveTokens } from '../lib/auth';
+import { clearTokens, saveTokens } from '../lib/auth';
 
 export default function RegisterScreen({ onBack, onRegister }: { onBack: () => void; onRegister: () => void }) {
   const [email, setEmail] = useState('');
@@ -12,6 +12,14 @@ export default function RegisterScreen({ onBack, onRegister }: { onBack: () => v
   const [passwordError, setPasswordError] = useState('');
   const [confirmError, setConfirmError] = useState('');
   const isValidEmail = (value: string) => /\S+@\S+\.\S+/.test(value.trim());
+  const mapAuthError = (raw: string) => {
+    const normalized = raw.trim().toLowerCase();
+    if (normalized === 'invalid email') return 'Invalid email address.';
+    if (normalized.startsWith('password length')) return 'Password must be 6-128 characters.';
+    if (normalized === 'user already exists') return 'An account with this email already exists.';
+    if (normalized === 'invalid json') return 'Invalid request. Please try again.';
+    return raw || 'Registration failed';
+  };
   return (
     <AuthLayout title="Create Account">
       <View style={styles.form}>
@@ -67,12 +75,21 @@ export default function RegisterScreen({ onBack, onRegister }: { onBack: () => v
               });
               const data = await res.json();
               if (!res.ok) {
-                throw new Error(data?.error ?? `HTTP ${res.status}`);
+                throw new Error(mapAuthError(data?.error ?? `HTTP ${res.status}`));
               }
+              await clearTokens();
               await saveTokens(data);
               onRegister();
             } catch (err) {
-              setPasswordError(err instanceof Error ? err.message : 'Registration failed');
+              const raw = err instanceof Error ? err.message : 'Registration failed';
+              const msg = mapAuthError(raw);
+              if (msg.toLowerCase().includes('email')) {
+                setEmailError(msg);
+              } else if (msg.toLowerCase().includes('password')) {
+                setPasswordError(msg);
+              } else {
+                setPasswordError(msg);
+              }
             }
           }}
         >

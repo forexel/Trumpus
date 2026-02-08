@@ -13,7 +13,8 @@ import tucker from '../../assets/TuckerCarlson.png';
 import lbj from '../../assets/LyndonBJohnson.png';
 import zuck from '../../assets/MarkZuckerberg.png';
 import epstein from '../../assets/JeffreyEpstein.png';
-import { ChatItem, fetchMessages, MessageItem, sendMessage } from '../lib/api';
+import { ChatItem, fetchMessages, getWsBase, MessageItem, sendMessage } from '../lib/api';
+import { getAccessToken } from '../lib/auth';
 
 const personas = [
   { name: 'Donald Trump', avatar: trump },
@@ -94,6 +95,8 @@ export default function ChatDetailScreen({
   const dotB = useRef(new Animated.Value(0.2)).current;
   const dotC = useRef(new Animated.Value(0.2)).current;
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const wsConnectedRef = useRef(false);
   const scrollRef = useRef<ScrollView | null>(null);
 
   const avatarMap = useMemo(() => {
@@ -111,6 +114,51 @@ export default function ChatDetailScreen({
     loadMessages();
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [chat.id]);
+
+  useEffect(() => {
+    let mounted = true;
+    const connect = async () => {
+      const token = await getAccessToken();
+      if (!token || !mounted) return;
+      const ws = new WebSocket(`${getWsBase()}/ws?token=${encodeURIComponent(token)}&chat_id=${encodeURIComponent(chat.id)}`);
+      wsRef.current = ws;
+      ws.onopen = () => {
+        wsConnectedRef.current = true;
+      };
+      ws.onclose = () => {
+        wsConnectedRef.current = false;
+      };
+      ws.onerror = () => {
+        wsConnectedRef.current = false;
+      };
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data as string);
+          if (payload?.type !== 'message_created') return;
+          if (payload?.chat_id !== chat.id) return;
+          const incoming = payload?.message as MessageItem | undefined;
+          if (!incoming) return;
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === incoming.id)) return prev;
+            return [...prev, incoming];
+          });
+          if (incoming.sender === 'admin') {
+            setTyping(false);
+            if (pollRef.current) clearInterval(pollRef.current);
+          }
+        } catch {
+          // ignore malformed events
+        }
+      };
+    };
+    connect();
+    return () => {
+      mounted = false;
+      wsConnectedRef.current = false;
+      wsRef.current?.close();
+      wsRef.current = null;
     };
   }, [chat.id]);
 
@@ -308,7 +356,9 @@ export default function ChatDetailScreen({
               const msg = await sendMessage(chat.id, text.trim(), chat.persona);
               setMessages((prev) => [...prev, msg]);
               setText('');
-              startPolling(msg.created_at);
+              if (!wsConnectedRef.current) {
+                startPolling(msg.created_at);
+              }
             } catch (err) {
               setTyping(false);
               const msg = err instanceof Error ? err.message : 'Failed to send message';

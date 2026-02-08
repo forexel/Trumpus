@@ -6,7 +6,7 @@ import AuthLayout from './AuthLayout';
 import { API_BASE_URL, GOOGLE_ANDROID_CLIENT_ID, GOOGLE_WEB_CLIENT_ID } from '../config';
 import GoogleIcon from '../../assets/google.svg';
 import { useEffect, useState } from 'react';
-import { saveTokens } from '../lib/auth';
+import { clearTokens, saveTokens } from '../lib/auth';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -21,6 +21,15 @@ export default function LoginScreen({
   onLogin: () => void;
   onError: (title: string, message: string, retry: () => void) => void;
 }) {
+  const mapAuthError = (raw: string) => {
+    const normalized = raw.trim().toLowerCase();
+    if (normalized === 'invalid email') return 'Invalid email address.';
+    if (normalized.startsWith('password length')) return 'Password must be 6-128 characters.';
+    if (normalized === 'invalid credentials') return 'Email or password is incorrect.';
+    if (normalized === 'user already exists') return 'An account with this email already exists.';
+    if (normalized === 'invalid json') return 'Invalid request. Please try again.';
+    return raw || 'Authentication error';
+  };
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [emailError, setEmailError] = useState('');
@@ -49,8 +58,9 @@ export default function LoginScreen({
           });
           const data = await res.json();
           if (!res.ok) {
-            throw new Error(data?.error ?? `HTTP ${res.status}`);
+            throw new Error(mapAuthError(data?.error ?? `HTTP ${res.status}`));
           }
+          await clearTokens();
           await saveTokens(data);
           onLogin();
         };
@@ -60,7 +70,7 @@ export default function LoginScreen({
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'unknown';
           setEmailError(' ');
-          setPasswordError(msg || 'Authentication error');
+          setPasswordError(mapAuthError(msg || 'Authentication error'));
         }
       } else if (response?.type === 'error') {
         const details = response.params ? JSON.stringify(response.params) : 'no details';
@@ -113,8 +123,9 @@ export default function LoginScreen({
               });
               const data = await res.json();
               if (!res.ok) {
-                throw new Error(data?.error ?? `HTTP ${res.status}`);
+                throw new Error(mapAuthError(data?.error ?? `HTTP ${res.status}`));
               }
+              await clearTokens();
               await saveTokens(data);
               onLogin();
             };
@@ -123,11 +134,7 @@ export default function LoginScreen({
               await retry();
             } catch (err) {
               const raw = err instanceof Error ? err.message : 'Invalid credentials';
-              const lowered = raw.toLowerCase();
-              const msg =
-                lowered.includes('password length') || lowered.includes('6-128')
-                  ? 'Invalid credentials'
-                  : raw;
+              const msg = mapAuthError(raw);
               setEmailError(' ');
               setPasswordError(msg);
             }

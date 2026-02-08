@@ -49,7 +49,7 @@ export default function ForgotPasswordPage() {
               placeholder="mail@gmail.com"
             />
             <div className="field-error">{fieldErrors.email || error ? fieldErrors.email || error : ''}</div>
-            {sent ? <div className="hint">Check your email for the reset link.</div> : null}
+            {sent ? <div className="hint">E-mail sent. Check your inbox for the reset link.</div> : null}
             <div className="auth-actions">
               <button className="btn-primary" type="submit" disabled={loading}>
                 {loading ? 'Sending...' : 'Send e-mail'}

@@ -3,6 +3,9 @@ const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http:
 const LAST_CHAT_KEY = 'last_chat_id'
 const CLIENT_ID_KEY = 'client_id'
 const CLIENT_EMAIL_KEY = 'client_email'
+const ACCESS_TOKEN_KEY = 'access_token'
+const REFRESH_TOKEN_KEY = 'refresh_token'
+const ACCESS_EXPIRES_KEY = 'access_expires'
 
 export type ChatSummary = {
   id: string
@@ -27,6 +30,28 @@ export function getWsBase() {
   return API_BASE.replace(/^http/, 'ws')
 }
 
+export function getAccessToken() {
+  return localStorage.getItem(ACCESS_TOKEN_KEY) ?? ''
+}
+
+export function getRefreshToken() {
+  return localStorage.getItem(REFRESH_TOKEN_KEY) ?? ''
+}
+
+function setAuthTokens(tokens: { access_token: string; refresh_token: string; access_expires?: string }) {
+  localStorage.setItem(ACCESS_TOKEN_KEY, tokens.access_token)
+  localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refresh_token)
+  if (tokens.access_expires) {
+    localStorage.setItem(ACCESS_EXPIRES_KEY, tokens.access_expires)
+  }
+}
+
+function clearAuthTokens() {
+  localStorage.removeItem(ACCESS_TOKEN_KEY)
+  localStorage.removeItem(REFRESH_TOKEN_KEY)
+  localStorage.removeItem(ACCESS_EXPIRES_KEY)
+}
+
 export function setClientSession(clientId: string, email: string) {
   if (clientId) localStorage.setItem(CLIENT_ID_KEY, clientId)
   if (email) localStorage.setItem(CLIENT_EMAIL_KEY, email)
@@ -38,15 +63,26 @@ export function clearClientSession() {
 }
 
 async function refreshAccessToken() {
+  const refreshToken = getRefreshToken()
   const res = await fetch(`${API_BASE}/auth/refresh`, {
     method: 'POST',
+    headers: refreshToken ? { 'Content-Type': 'application/json' } : undefined,
     credentials: 'include',
+    body: refreshToken ? JSON.stringify({ refresh_token: refreshToken }) : undefined,
   })
-  return res.ok
+  if (!res.ok) return false
+  const data = (await res.json()) as { access_token: string; refresh_token: string; access_expires?: string }
+  if (data.access_token && data.refresh_token) {
+    setAuthTokens(data)
+    return true
+  }
+  return false
 }
 
 async function fetchWithAuth(input: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers ?? {})
+  const token = getAccessToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
   if (!headers.has('Content-Type') && init.body) {
     headers.set('Content-Type', 'application/json')
   }
@@ -56,6 +92,8 @@ async function fetchWithAuth(input: string, init: RequestInit = {}) {
   const refreshed = await refreshAccessToken()
   if (!refreshed) return res
   const retryHeaders = new Headers(init.headers ?? {})
+  const newToken = getAccessToken()
+  if (newToken) retryHeaders.set('Authorization', `Bearer ${newToken}`)
   if (!retryHeaders.has('Content-Type') && init.body) {
     retryHeaders.set('Content-Type', 'application/json')
   }
@@ -72,8 +110,24 @@ export function setLastChatId(chatId: string) {
 }
 
 export async function getSession() {
-  const res = await fetch(`${API_BASE}/auth/session`, { credentials: 'include' })
-  if (!res.ok) return null
+  const headers = new Headers()
+  const token = getAccessToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  let res = await fetch(`${API_BASE}/auth/session`, { headers, credentials: 'include' })
+  if (res.status === 401) {
+    const refreshed = await refreshAccessToken()
+    if (refreshed) {
+      const retryHeaders = new Headers()
+      const newToken = getAccessToken()
+      if (newToken) retryHeaders.set('Authorization', `Bearer ${newToken}`)
+      res = await fetch(`${API_BASE}/auth/session`, { headers: retryHeaders, credentials: 'include' })
+    }
+  }
+  if (!res.ok) {
+    clearAuthTokens()
+    clearClientSession()
+    return null
+  }
   const data = (await res.json()) as { client_id: string; email: string }
   setClientSession(data.client_id, data.email)
   return data
@@ -81,6 +135,7 @@ export async function getSession() {
 
 export async function logout() {
   await fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' })
+  clearAuthTokens()
   clearClientSession()
 }
 
@@ -132,8 +187,13 @@ export async function login(email: string, password: string) {
     credentials: 'include',
     body: JSON.stringify({ email, password }),
   })
-  if (!res.ok) throw new Error('Invalid email or password')
+  if (!res.ok) {
+    throw new Error(await parseAuthError(res, 'Invalid email or password'))
+  }
   const data = (await res.json()) as { access_token: string; refresh_token: string; email: string; client_id: string; access_expires?: string }
+  if (data.access_token && data.refresh_token) {
+    setAuthTokens(data)
+  }
   setClientSession(data.client_id, data.email)
   return data
 }
@@ -145,10 +205,34 @@ export async function register(email: string, password: string) {
     credentials: 'include',
     body: JSON.stringify({ email, password }),
   })
-  if (!res.ok) throw new Error('Registration failed')
+  if (!res.ok) {
+    throw new Error(await parseAuthError(res, 'Registration failed'))
+  }
   const data = (await res.json()) as { access_token: string; refresh_token: string; email: string; client_id: string; access_expires?: string }
+  if (data.access_token && data.refresh_token) {
+    setAuthTokens(data)
+  }
   setClientSession(data.client_id, data.email)
   return data
+}
+
+async function parseAuthError(res: Response, fallback: string) {
+  if (res.status === 429) return 'Too many requests. Try again later.'
+  let raw = ''
+  try {
+    const data = (await res.json()) as { error?: string }
+    raw = data?.error ?? ''
+  } catch {
+    return fallback
+  }
+  const normalized = raw.trim().toLowerCase()
+  if (normalized === 'invalid email') return 'Invalid email address.'
+  if (normalized.startsWith('password length')) return 'Password must be 6-128 characters.'
+  if (normalized === 'invalid credentials') return 'Email or password is incorrect.'
+  if (normalized === 'user already exists') return 'An account with this email already exists.'
+  if (normalized === 'invalid json') return 'Invalid request. Please try again.'
+  if (normalized !== '') return raw
+  return fallback
 }
 
 export async function forgotPassword(email: string) {
@@ -170,6 +254,9 @@ export async function resetPassword(token: string, newPassword: string) {
   })
   if (!res.ok) throw new Error('Failed to reset password')
   const data = (await res.json()) as { access_token: string; refresh_token: string; email: string; client_id: string; access_expires?: string }
+  if (data.access_token && data.refresh_token) {
+    setAuthTokens(data)
+  }
   setClientSession(data.client_id, data.email)
   return data
 }
@@ -183,6 +270,9 @@ export async function resetPasswordWithOld(email: string, oldPassword: string, n
   })
   if (!res.ok) throw new Error('Failed to reset password')
   const data = (await res.json()) as { access_token: string; refresh_token: string; email: string; client_id: string; access_expires?: string }
+  if (data.access_token && data.refresh_token) {
+    setAuthTokens(data)
+  }
   setClientSession(data.client_id, data.email)
   return data
 }

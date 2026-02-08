@@ -10,7 +10,7 @@ import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 import ChatsScreen from './src/screens/ChatsScreen';
 import ChatDetailScreen from './src/screens/ChatDetailScreen';
 import ErrorScreen from './src/screens/ErrorScreen';
-import { clearTokens, getAccessToken, refreshTokens } from './src/lib/auth';
+import { clearTokens, getSession } from './src/lib/auth';
 import { ChatItem, fetchChats } from './src/lib/api';
 
 export default function App() {
@@ -36,6 +36,16 @@ export default function App() {
       const sorted = [...items].sort((a, b) => (a.last_message_at || '').localeCompare(b.last_message_at || '')).reverse();
       setChats(sorted);
       return sorted;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      if (message.includes('HTTP 401')) {
+        await clearTokens();
+        setChats([]);
+        setActiveChat(null);
+        setScreen('login');
+        return [];
+      }
+      throw err;
     } finally {
       setLoadingChats(false);
     }
@@ -43,20 +53,23 @@ export default function App() {
 
   useEffect(() => {
     async function bootstrap() {
-      const token = await getAccessToken();
-      if (!token) {
-        const refreshed = await refreshTokens();
-        if (!refreshed) {
-          setAuthReady(true);
-          return;
-        }
+      const session = await getSession();
+      if (!session?.client_id) {
+        await clearTokens();
+        setAuthReady(true);
+        return;
       }
-      const items = await loadChats();
-      if (items.length > 0) {
-        setActiveChat(items[0]);
-        setScreen('chat');
-      } else {
-        setScreen('chats');
+      try {
+        const items = await loadChats();
+        if (items.length > 0) {
+          setActiveChat(items[0]);
+          setScreen('chat');
+        } else {
+          setScreen('chats');
+        }
+      } catch {
+        await clearTokens();
+        setScreen('login');
       }
       setAuthReady(true);
     }
