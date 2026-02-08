@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useState } from 'react';
 import AuthLayout from './AuthLayout';
 import { resetPasswordWithToken } from '../lib/api';
-import { saveTokens } from '../lib/auth';
+import { clearTokens, saveTokens } from '../lib/auth';
 
 export default function ResetPasswordScreen({
   token,
@@ -17,6 +17,15 @@ export default function ResetPasswordScreen({
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const mapAuthError = (raw: string) => {
+    const normalized = raw.trim().toLowerCase();
+    if (normalized === 'invalid email') return 'Invalid email address.';
+    if (normalized.startsWith('password length')) return 'Password must be 6-128 characters.';
+    if (normalized === 'invalid credentials') return 'Reset token is invalid or expired.';
+    if (normalized === 'invalid json') return 'Invalid request. Please try again.';
+    if (normalized === 'rate_limited') return 'Too many requests. Try again later.';
+    return raw || 'Reset failed.';
+  };
 
   return (
     <AuthLayout title="Reset Password">
@@ -57,10 +66,12 @@ export default function ResetPasswordScreen({
             try {
               setLoading(true);
               const data = await resetPasswordWithToken(token, newPass);
+              await clearTokens();
               await saveTokens(data);
               onSuccess();
             } catch (err) {
-              setError(err instanceof Error ? err.message : 'Reset failed');
+              const raw = err instanceof Error ? err.message : 'Reset failed';
+              setError(mapAuthError(raw));
             } finally {
               setLoading(false);
             }

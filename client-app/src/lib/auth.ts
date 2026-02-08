@@ -59,3 +59,20 @@ export async function refreshTokens() {
   }
   return null;
 }
+
+export async function getSession() {
+  const token = await getAccessToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let res = await fetch(`${API_BASE_URL}/auth/session`, { headers });
+  if (res.status === 401) {
+    const refreshed = await refreshTokens();
+    if (refreshed?.access_token) {
+      res = await fetch(`${API_BASE_URL}/auth/session`, {
+        headers: { Authorization: `Bearer ${refreshed.access_token}` },
+      });
+    }
+  }
+  if (!res.ok) return null;
+  return (await res.json()) as { client_id: string; email: string };
+}

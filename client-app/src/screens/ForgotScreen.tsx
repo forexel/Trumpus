@@ -6,7 +6,17 @@ import { API_BASE_URL } from '../config';
 export default function ForgotScreen({ onBack }: { onBack: () => void }) {
   const [email, setEmail] = useState('');
   const [emailError, setEmailError] = useState('');
+  const [sent, setSent] = useState(false);
   const isValidEmail = (value: string) => /\S+@\S+\.\S+/.test(value.trim());
+  const mapAuthError = (raw: string) => {
+    const normalized = raw.trim().toLowerCase();
+    if (normalized === 'invalid email') return 'Invalid email address.';
+    if (normalized === 'invalid json') return 'Invalid request. Please try again.';
+    if (normalized === 'reset link not configured') return 'Reset is not configured. Try later.';
+    if (normalized === 'email send failed') return 'Unable to send email. Try again later.';
+    if (normalized === 'rate_limited') return 'Too many requests. Try again later.';
+    return raw || 'Failed to send email.';
+  };
   return (
     <AuthLayout title="Restore Password">
       <View style={styles.form}>
@@ -26,15 +36,26 @@ export default function ForgotScreen({ onBack }: { onBack: () => void }) {
             const nextEmailError = email ? (isValidEmail(email) ? '' : 'Invalid email') : 'Required';
             setEmailError(nextEmailError);
             if (nextEmailError) return;
-            await fetch(`${API_BASE_URL}/auth/forgot-password`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email }),
-            });
+            try {
+              const res = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email }),
+              });
+              if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(mapAuthError(data?.error ?? `HTTP ${res.status}`));
+              }
+              setSent(true);
+            } catch (err) {
+              const raw = err instanceof Error ? err.message : 'Failed to send email.';
+              setEmailError(mapAuthError(raw));
+            }
           }}
         >
           <Text style={styles.primaryButtonText}>Send e-mail</Text>
         </Pressable>
+        {sent ? <Text style={styles.successText}>E-mail sent. Check your inbox for the reset link.</Text> : null}
 
         <Pressable onPress={onBack}>
           <Text style={styles.linkText}>Back to login</Text>
@@ -92,6 +113,12 @@ const styles = StyleSheet.create({
     marginTop: 12,
     color: '#bf0a30',
     fontWeight: '600',
+    textAlign: 'center',
+  },
+  successText: {
+    marginTop: 10,
+    color: '#0b2d6b',
+    fontSize: 12,
     textAlign: 'center',
   },
 });

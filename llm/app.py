@@ -26,6 +26,8 @@ MAX_ATTEMPTS = int(os.getenv("OPENROUTER_MAX_ATTEMPTS", "10"))
 INITIAL_DELAY = float(os.getenv("OPENROUTER_INITIAL_DELAY", "0.5"))
 MAX_DELAY = float(os.getenv("OPENROUTER_MAX_DELAY", "8"))
 
+DASH_RULE = "Avoid em dash (—) and en dash (–). Use a simple hyphen '-' if needed."
+
 app = FastAPI()
 
 
@@ -162,7 +164,7 @@ async def respond(req: RespondRequest, response: Response):
         return {"error": "llm_not_configured", "detail": "No LLM models configured"}
 
     persona = (req.persona or "Donald Trump").strip()
-    system_prompt = PERSONA_PROMPTS.get(persona, PERSONA_PROMPTS["Donald Trump"])
+    system_prompt = f"{PERSONA_PROMPTS.get(persona, PERSONA_PROMPTS['Donald Trump'])}\n\n{DASH_RULE}"
     timeout = httpx.Timeout(connect=CONNECT_TIMEOUT, read=READ_TIMEOUT, write=WRITE_TIMEOUT, pool=POOL_TIMEOUT)
 
     async def call_openrouter(model: str):
@@ -240,7 +242,7 @@ async def respond(req: RespondRequest, response: Response):
                 else:
                     response.status_code = 200
                     return {
-                        "content": content,
+                        "content": normalize_dashes(content),
                         "model": used_model,
                         "provider": used_provider,
                         "latency_ms": int((time.time() - start_time) * 1000),
@@ -300,3 +302,12 @@ async def respond(req: RespondRequest, response: Response):
 
     response.status_code = 502
     return {"error": "upstream_error", "detail": "Unknown LLM error"}
+
+
+def normalize_dashes(text: str) -> str:
+    if not text:
+        return text
+    normalized = text.replace("—", "-").replace("–", "-").replace("―", "-")
+    while "--" in normalized:
+        normalized = normalized.replace("--", "-")
+    return normalized
