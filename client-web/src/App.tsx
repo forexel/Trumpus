@@ -1,6 +1,6 @@
 import { Routes, Route, Link, Navigate, useLocation } from 'react-router-dom'
 import { useEffect, useState } from 'react'
-import { getLastChatId, getSession } from './lib/api'
+import { getAccessToken, getClientId, getLastChatId, getSession } from './lib/api'
 import LoginPage from './pages/LoginPage'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import ChatsPage from './pages/ChatsPage'
@@ -17,6 +17,11 @@ export default function App() {
   useEffect(() => {
     let active = true
     setSessionReady(false)
+    const hasLocalSession = Boolean(getAccessToken() || getClientId())
+    if (hasLocalSession) {
+      setAuthed(true)
+      setSessionReady(true)
+    }
     getSession()
       .then((data) => {
         if (active) setAuthed(Boolean(data?.client_id))
