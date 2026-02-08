@@ -33,3 +33,5 @@ coverage/
 *.exe
 *.test
 *.out
+docker-compose.prod.yml
+jwt_secret.txt

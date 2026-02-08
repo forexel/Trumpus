@@ -1,0 +1,141 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    container_name: trumpus_db
+    environment:
+      POSTGRES_USER: trumpus
+      POSTGRES_PASSWORD: trumpus
+      POSTGRES_DB: trumpus
+    volumes:
+      - trumpus_pgdata:/var/lib/postgresql/data
+    networks:
+      - apps
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: trumpus_api
+    environment:
+      DATABASE_URL: postgresql://trumpus:trumpus@db:5432/trumpus?sslmode=disable
+      PORT: 8000
+
+      # ВАЖНО: используем внешний redis контейнер "redis" из твоего /srv/redis
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+
+      JWT_SECRET: ${JWT_SECRET}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+
+      COOKIE_SECURE: "true"
+      TRUST_PROXY: "true"
+
+      # Потом заменим на домены. Пока можно временно так:
+      CORS_ORIGINS: http://localhost,http://127.0.0.1
+      OAUTH_REDIRECT_ALLOWLIST: http://localhost
+
+      # Google/OAuth позже аккуратно настроим, лучше убрать пока, чтобы не ломало старт
+      GOOGLE_CLIENT_ID:
+      GOOGLE_CLIENT_SECRET:
+      GOOGLE_OAUTH_CALLBACK_URL:
+
+      LLM_BASE: http://llm:8010
+    depends_on:
+      - db
+    networks:
+      - apps
+      - web
+    restart: unless-stopped
+
+    labels:
+      - "traefik.enable=true"
+      # временно без домена: роутим по Host header, позже заменим на trumpus.tech
+      - "traefik.http.routers.trumpus-api.rule=Host(`api.trumpus.tech`)"
+      - "traefik.http.routers.trumpus-api.entrypoints=websecure"
+      - "traefik.http.routers.trumpus-api.tls=true"
+      - "traefik.http.services.trumpus-api.loadbalancer.server.port=8000"
+
+  worker:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: trumpus_worker
+    environment:
+      DATABASE_URL: postgresql://trumpus:trumpus@db:5432/trumpus?sslmode=disable
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      LLM_BASE: http://llm:8010
+      RUN_MODE: worker
+      JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      - db
+      - llm
+    networks:
+      - apps
+    restart: unless-stopped
+
+  llm:
+    build:
+      context: ./llm
+      dockerfile: Dockerfile
+    container_name: trumpus_llm
+    environment:
+      API_BASE: http://api:8000/api/v1
+      PORT: 8010
+      LLM_PROVIDER: openrouter
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL}
+    depends_on:
+      - api
+    networks:
+      - apps
+    restart: unless-stopped
+
+  client-web:
+    build:
+      context: ./client-web
+      dockerfile: Dockerfile
+    container_name: trumpus_client_web
+    environment:
+      VITE_API_BASE: https://api.trumpus.tech/api/v1
+    depends_on:
+      - api
+    networks:
+      - web
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.trumpus-web.rule=Host(`trumpus.tech`)"
+      - "traefik.http.routers.trumpus-web.entrypoints=websecure"
+      - "traefik.http.routers.trumpus-web.tls=true"
+      - "traefik.http.services.trumpus-web.loadbalancer.server.port=5173"
+
+  admin-web:
+    build:
+      context: ./admin-web
+      dockerfile: Dockerfile
+    container_name: trumpus_admin_web
+    environment:
+      VITE_API_BASE: https://api.trumpus.tech/api/v1
+    depends_on:
+      - api
+    networks:
+      - web
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.trumpus-admin.rule=Host(`admin.trumpus.tech`)"
+      - "traefik.http.routers.trumpus-admin.entrypoints=websecure"
+      - "traefik.http.routers.trumpus-admin.tls=true"
+      - "traefik.http.services.trumpus-admin.loadbalancer.server.port=5174"
+
+volumes:
+  trumpus_pgdata:
+
+networks:
+  web:
+    external: true
+  apps:
+    external: true
