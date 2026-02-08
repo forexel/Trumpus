@@ -1,6 +1,6 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { createChat, getClientId, sendMessage } from '../lib/api'
+import { createChat, getAccessToken, getClientId, sendMessage } from '../lib/api'
 import { useTheme } from '../lib/useTheme'
 import trumpAvatar from '../assets/DonaldTrump.png'
 import muskAvatar from '../assets/ElonMask.png'
@@ -116,6 +116,12 @@ export default function NewChatPage() {
   const { theme, toggleTheme } = useTheme()
 
   const clientId = useMemo(() => getClientId(), [])
+
+  useEffect(() => {
+    if (!getAccessToken() && !clientId) {
+      navigate('/login', { replace: true })
+    }
+  }, [clientId, navigate])
 
   useLayoutEffect(() => {
     if (!isOpen || !optionsRef.current) return
