@@ -14,11 +14,12 @@ export default function App() {
   const location = useLocation()
   const [sessionReady, setSessionReady] = useState(false)
   const [authed, setAuthed] = useState(false)
+  const localAuthed = Boolean(getAccessToken())
+  const canAccess = authed || localAuthed
   useEffect(() => {
     let active = true
     setSessionReady(false)
-    const hasLocalSession = Boolean(getAccessToken() || getClientId())
-    if (hasLocalSession) {
+    if (localAuthed) {
       setAuthed(true)
       setSessionReady(true)
     }
@@ -60,21 +61,21 @@ export default function App() {
           <Route
             path="/"
             element={
-              authed
+              canAccess
                 ? <Navigate to={getLastChatId() ? `/chats/${getLastChatId()}` : '/chats'} replace />
                 : <Navigate to="/login" replace />
             }
           />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/forgot" element={<ForgotPasswordPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/reset" element={<ResetPasswordPage />} />
-          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/login" element={canAccess ? <Navigate to="/chats" replace /> : <LoginPage />} />
+          <Route path="/forgot" element={canAccess ? <Navigate to="/chats" replace /> : <ForgotPasswordPage />} />
+          <Route path="/register" element={canAccess ? <Navigate to="/chats" replace /> : <RegisterPage />} />
+          <Route path="/reset" element={canAccess ? <Navigate to="/chats" replace /> : <ResetPasswordPage />} />
+          <Route path="/reset-password" element={canAccess ? <Navigate to="/chats" replace /> : <ResetPasswordPage />} />
           <Route path="/auth/google/callback" element={<GoogleCallbackPage />} />
           <Route path="/auth/google/callback/*" element={<GoogleCallbackPage />} />
-          <Route path="/chats" element={authed ? <ChatsPage /> : <Navigate to="/login" replace />} />
-          <Route path="/chats/new" element={authed ? <NewChatPage /> : <Navigate to="/login" replace />} />
-          <Route path="/chats/:id" element={authed ? <ChatDetailPage /> : <Navigate to="/login" replace />} />
+          <Route path="/chats" element={canAccess ? <ChatsPage /> : <Navigate to="/login" replace />} />
+          <Route path="/chats/new" element={canAccess ? <NewChatPage /> : <Navigate to="/login" replace />} />
+          <Route path="/chats/:id" element={canAccess ? <ChatDetailPage /> : <Navigate to="/login" replace />} />
         </Routes>
       </main>
     </div>
