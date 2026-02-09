@@ -1,11 +1,51 @@
+{
+  email admin@trumpus.tech
+}
+
+(block_secrets) {
+  @forbidden path /.env* /.git/* /.vscode/* /docker-compose* /Caddyfile
+  respond @forbidden 403
+}
+
+(common_headers) {
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  }
+}
+
 trumpus.tech {
-  reverse_proxy /api/* api:8000
-  reverse_proxy /ws api:8000
-  reverse_proxy client-web:5173
+  import block_secrets
+  import common_headers
+
+  route {
+    handle /api/* {
+      reverse_proxy trumpus_api:8000
+    }
+
+    handle {
+      reverse_proxy trumpus_client_web:80
+    }
+  }
 }
 
 admin.trumpus.tech {
-  reverse_proxy /api/* api:8000
-  reverse_proxy /ws api:8000
-  reverse_proxy admin-web:5174
+  import block_secrets
+  import common_headers
+
+  route {
+    handle /api/* {
+      reverse_proxy trumpus_api:8000
+    }
+
+    handle {
+      reverse_proxy trumpus_admin_web:80
+    }
+  }
+}
+
+api.trumpus.tech {
+  import block_secrets
+  import common_headers
+
+  reverse_proxy trumpus_api:8000
 }
