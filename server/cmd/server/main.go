@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -10,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	htmltmpl "html/template"
 	"io"
 	"log"
 	"net"
@@ -18,9 +20,11 @@ import (
 	"net/smtp"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	texttmpl "text/template"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -770,19 +774,105 @@ func buildResetLink(base, token string) string {
 }
 
 func sendResetEmail(to, link string) error {
-    cfg, err := smtpConfigFromEnv()
-    if err != nil {
-        return err
-    }
-    subject := "Change Password"
-    body := fmt.Sprintf(
-        "Your link for changing password is valid for 1 hour:\n\n%s\n\nIf you didn’t request this, you can safely ignore this email.",
-        link,
-    )
-    return sendSMTPMail(cfg, to, subject, body)
+	cfg, err := smtpConfigFromEnv()
+	if err != nil {
+		return err
+	}
+	subject := "Change Password"
+	textBody, htmlBody := renderResetTemplates(link)
+	if textBody == "" {
+		textBody = fmt.Sprintf(
+			"Your link for changing password is valid for 1 hour:\n\n%s\n\nIf you didn't request this, you can safely ignore this email.",
+			link,
+		)
+	}
+	if htmlBody != "" {
+		return sendSMTPMailMultipart(cfg, to, subject, textBody, htmlBody)
+	}
+	return sendSMTPMail(cfg, to, subject, textBody)
+}
+
+func mailTemplateDir() string {
+	return strings.TrimSpace(os.Getenv("MAIL_TEMPLATES_DIR"))
+}
+
+func renderResetTemplates(link string) (string, string) {
+	base := mailTemplateDir()
+	if base == "" {
+		return "", ""
+	}
+	data := struct {
+		Link string
+	}{Link: link}
+
+	var textOut string
+	textPath := filepath.Join(base, "reset_password.en.txt")
+	if raw, err := os.ReadFile(textPath); err == nil {
+		if tmpl, err := texttmpl.New("reset_text").Parse(string(raw)); err == nil {
+			var buf bytes.Buffer
+			if err := tmpl.Execute(&buf, data); err == nil {
+				textOut = buf.String()
+			}
+		}
+	}
+
+	var htmlOut string
+	htmlPath := filepath.Join(base, "reset_password.en.html")
+	if raw, err := os.ReadFile(htmlPath); err == nil {
+		if tmpl, err := htmltmpl.New("reset_html").Parse(string(raw)); err == nil {
+			var buf bytes.Buffer
+			if err := tmpl.Execute(&buf, data); err == nil {
+				htmlOut = buf.String()
+			}
+		}
+	}
+
+	return textOut, htmlOut
 }
 
 func sendSMTPMail(cfg *smtpConfig, to, subject, body string) error {
+	msg := fmt.Sprintf(
+		"From: %s\r\n"+
+			"To: %s\r\n"+
+			"Subject: %s\r\n"+
+			"MIME-Version: 1.0\r\n"+
+			"Content-Type: text/plain; charset=\"UTF-8\"\r\n"+
+			"Content-Transfer-Encoding: 7bit\r\n\r\n"+
+			"%s\r\n",
+		cfg.From,
+		to,
+		subject,
+		body,
+	)
+	return sendSMTPMessage(cfg, to, msg)
+}
+
+func sendSMTPMailMultipart(cfg *smtpConfig, to, subject, textBody, htmlBody string) error {
+	boundary := fmt.Sprintf("alt-%d", time.Now().UnixNano())
+	var msg strings.Builder
+	msg.WriteString(fmt.Sprintf("From: %s\r\n", cfg.From))
+	msg.WriteString(fmt.Sprintf("To: %s\r\n", to))
+	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
+	msg.WriteString("MIME-Version: 1.0\r\n")
+	msg.WriteString(fmt.Sprintf("Content-Type: multipart/alternative; boundary=\"%s\"\r\n\r\n", boundary))
+
+	msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+	msg.WriteString("Content-Type: text/plain; charset=\"UTF-8\"\r\n")
+	msg.WriteString("Content-Transfer-Encoding: 7bit\r\n\r\n")
+	msg.WriteString(textBody)
+	msg.WriteString("\r\n")
+
+	msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+	msg.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
+	msg.WriteString("Content-Transfer-Encoding: 7bit\r\n\r\n")
+	msg.WriteString(htmlBody)
+	msg.WriteString("\r\n")
+
+	msg.WriteString(fmt.Sprintf("--%s--\r\n", boundary))
+	return sendSMTPMessage(cfg, to, msg.String())
+}
+
+func sendSMTPMessage(cfg *smtpConfig, to, msg string) error {
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	timeout := smtpTimeout()
 	dialer := &net.Dialer{Timeout: timeout}
@@ -830,13 +920,6 @@ func sendSMTPMail(cfg *smtpConfig, to, subject, body string) error {
 	if err != nil {
 		return err
 	}
-	msg := fmt.Sprintf(
-		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
-		cfg.From,
-		to,
-		subject,
-		body,
-	)
 	if _, err := writer.Write([]byte(msg)); err != nil {
 		_ = writer.Close()
 		return err

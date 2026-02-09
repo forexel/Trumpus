@@ -25,7 +25,17 @@ POOL_TIMEOUT = float(os.getenv("OPENROUTER_POOL_TIMEOUT", "5"))
 MAX_ATTEMPTS = int(os.getenv("OPENROUTER_MAX_ATTEMPTS", "10"))
 INITIAL_DELAY = float(os.getenv("OPENROUTER_INITIAL_DELAY", "0.5"))
 MAX_DELAY = float(os.getenv("OPENROUTER_MAX_DELAY", "8"))
+MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "700"))
+TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.95"))
+TOP_P = float(os.getenv("LLM_TOP_P", "0.95"))
+PRESENCE_PENALTY = float(os.getenv("LLM_PRESENCE_PENALTY", "0.4"))
+FREQUENCY_PENALTY = float(os.getenv("LLM_FREQUENCY_PENALTY", "0.2"))
 
+STYLE_RULE = (
+    "Stay in-character with vivid, specific, high-energy language. "
+    "Avoid generic or bland replies. If the user message is short, still respond with 2-5 punchy sentences. "
+    "Use character catchphrases and a strong point of view. Ask a follow-up question when it fits."
+)
 DASH_RULE = "Avoid em dash (—) and en dash (–). Use a simple hyphen '-' if needed."
 
 app = FastAPI()
@@ -164,7 +174,10 @@ async def respond(req: RespondRequest, response: Response):
         return {"error": "llm_not_configured", "detail": "No LLM models configured"}
 
     persona = (req.persona or "Donald Trump").strip()
-    system_prompt = f"{PERSONA_PROMPTS.get(persona, PERSONA_PROMPTS['Donald Trump'])}\n\n{DASH_RULE}"
+    system_prompt = (
+        f"{PERSONA_PROMPTS.get(persona, PERSONA_PROMPTS['Donald Trump'])}\n\n"
+        f"{STYLE_RULE}\n{DASH_RULE}"
+    )
     timeout = httpx.Timeout(connect=CONNECT_TIMEOUT, read=READ_TIMEOUT, write=WRITE_TIMEOUT, pool=POOL_TIMEOUT)
 
     async def call_openrouter(model: str):
@@ -174,8 +187,11 @@ async def respond(req: RespondRequest, response: Response):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": req.content},
             ],
-            "temperature": 0.9,
-            "max_tokens": 500,
+            "temperature": TEMPERATURE,
+            "top_p": TOP_P,
+            "presence_penalty": PRESENCE_PENALTY,
+            "frequency_penalty": FREQUENCY_PENALTY,
+            "max_tokens": MAX_TOKENS,
         }
         async with httpx.AsyncClient(timeout=timeout) as client:
             return await client.post(
@@ -194,8 +210,11 @@ async def respond(req: RespondRequest, response: Response):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": req.content},
             ],
-            "temperature": 0.9,
-            "max_tokens": 500,
+            "temperature": TEMPERATURE,
+            "top_p": TOP_P,
+            "presence_penalty": PRESENCE_PENALTY,
+            "frequency_penalty": FREQUENCY_PENALTY,
+            "max_tokens": MAX_TOKENS,
         }
         async with httpx.AsyncClient(timeout=timeout) as client:
             return await client.post(
