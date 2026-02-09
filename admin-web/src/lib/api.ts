@@ -31,6 +31,33 @@ export type Message = {
   created_at: string
 }
 
+export type AnalyticsBucket = {
+  new_registrations: number
+  dau: number
+  new_chats: number
+  new_messages: number
+}
+
+export type AnalyticsResponse = {
+  day: string
+  period: {
+    from: string
+    to: string
+  }
+  day_metrics: AnalyticsBucket
+  period_metrics: AnalyticsBucket
+  totals: {
+    registrations: number
+    chats: number
+    messages: number
+  }
+  today: {
+    new_registrations: { value: number; delta: number }
+    new_chats: { value: number; delta: number }
+    new_messages: { value: number; delta: number }
+  }
+}
+
 export function getWsBase() {
   return API_BASE.replace(/^http/, 'ws')
 }
@@ -87,4 +114,9 @@ export async function markChatRead(chatId: string) {
   return apiFetch(`/admin/chats/${chatId}/read`, {
     method: 'POST',
   })
+}
+
+export async function fetchAnalytics(day: string, from: string, to: string) {
+  const q = new URLSearchParams({ day, from, to })
+  return apiFetch(`/admin/analytics?${q.toString()}`) as Promise<AnalyticsResponse>
 }

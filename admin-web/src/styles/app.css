@@ -87,6 +87,34 @@ body {
   margin: 0 0 8px;
 }
 
+.analytics-page h2 {
+  margin: 20px 0 8px;
+  font-size: 18px;
+}
+
+.analytics-sections {
+  display: grid;
+  gap: 8px;
+}
+
+.analytics-filters {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.analytics-filters label {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.analytics-filters input {
+  margin-top: 6px;
+}
+
 .analytics-grid {
   margin-top: 16px;
   display: grid;
@@ -116,6 +144,24 @@ body {
   font-size: 24px;
   font-weight: 700;
   color: var(--text);
+}
+
+.stat-meta {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.delta {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.delta.up {
+  color: #157347;
+}
+
+.delta.down {
+  color: #b42318;
 }
 
 .card {

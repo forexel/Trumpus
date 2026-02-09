@@ -83,6 +83,7 @@ type Chat struct {
 	Title          string    `json:"title"`
 	Persona        string    `json:"persona"`
 	UnreadForAdmin int       `json:"unread_for_admin"`
+	CreatedAt      time.Time `json:"created_at"`
 	LastMessageAt  time.Time `json:"last_message_at"`
 }
 
@@ -272,9 +273,15 @@ func (s *Store) migrate() error {
 			title TEXT NOT NULL DEFAULT '',
 			persona TEXT NOT NULL,
 			unread_for_admin INT NOT NULL DEFAULT 0,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
+		`ALTER TABLE chats ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ`,
+		`UPDATE chats SET created_at=last_message_at WHERE created_at IS NULL`,
+		`ALTER TABLE chats ALTER COLUMN created_at SET DEFAULT NOW()`,
+		`ALTER TABLE chats ALTER COLUMN created_at SET NOT NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_chats_client_id ON chats(client_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_chats_created_at ON chats(created_at)`,
 		`CREATE TABLE IF NOT EXISTS messages (
 			id TEXT PRIMARY KEY,
 			chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
@@ -475,7 +482,7 @@ func (s *Store) listClients() ([]*Client, error) {
 }
 
 func (s *Store) listChatsByClient(clientID string) ([]*Chat, error) {
-	rows, err := s.db.Query(`SELECT id, client_id, title, persona, unread_for_admin, last_message_at
+	rows, err := s.db.Query(`SELECT id, client_id, title, persona, unread_for_admin, created_at, last_message_at
 		FROM chats WHERE client_id=$1 ORDER BY last_message_at DESC`, clientID)
 	if err != nil {
 		return nil, err
@@ -484,7 +491,7 @@ func (s *Store) listChatsByClient(clientID string) ([]*Chat, error) {
 	out := make([]*Chat, 0)
 	for rows.Next() {
 		var c Chat
-		if err := rows.Scan(&c.ID, &c.ClientID, &c.Title, &c.Persona, &c.UnreadForAdmin, &c.LastMessageAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.ClientID, &c.Title, &c.Persona, &c.UnreadForAdmin, &c.CreatedAt, &c.LastMessageAt); err != nil {
 			return nil, err
 		}
 		out = append(out, &c)
@@ -493,7 +500,7 @@ func (s *Store) listChatsByClient(clientID string) ([]*Chat, error) {
 }
 
 func (s *Store) listAllChats() ([]*Chat, error) {
-	rows, err := s.db.Query(`SELECT id, client_id, title, persona, unread_for_admin, last_message_at
+	rows, err := s.db.Query(`SELECT id, client_id, title, persona, unread_for_admin, created_at, last_message_at
 		FROM chats ORDER BY last_message_at DESC`)
 	if err != nil {
 		return nil, err
@@ -502,7 +509,7 @@ func (s *Store) listAllChats() ([]*Chat, error) {
 	out := make([]*Chat, 0)
 	for rows.Next() {
 		var c Chat
-		if err := rows.Scan(&c.ID, &c.ClientID, &c.Title, &c.Persona, &c.UnreadForAdmin, &c.LastMessageAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.ClientID, &c.Title, &c.Persona, &c.UnreadForAdmin, &c.CreatedAt, &c.LastMessageAt); err != nil {
 			return nil, err
 		}
 		out = append(out, &c)
@@ -512,8 +519,8 @@ func (s *Store) listAllChats() ([]*Chat, error) {
 
 func (s *Store) getChatByID(id string) (*Chat, error) {
 	var c Chat
-	if err := s.db.QueryRow(`SELECT id, client_id, title, persona, unread_for_admin, last_message_at FROM chats WHERE id=$1`, id).
-		Scan(&c.ID, &c.ClientID, &c.Title, &c.Persona, &c.UnreadForAdmin, &c.LastMessageAt); err != nil {
+	if err := s.db.QueryRow(`SELECT id, client_id, title, persona, unread_for_admin, created_at, last_message_at FROM chats WHERE id=$1`, id).
+		Scan(&c.ID, &c.ClientID, &c.Title, &c.Persona, &c.UnreadForAdmin, &c.CreatedAt, &c.LastMessageAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -529,14 +536,74 @@ func (s *Store) createChat(clientID, title, persona string) (*Chat, error) {
 		Title:          strings.TrimSpace(title),
 		Persona:        strings.TrimSpace(persona),
 		UnreadForAdmin: 0,
+		CreatedAt:      time.Now(),
 		LastMessageAt:  time.Now(),
 	}
-	_, err := s.db.Exec(`INSERT INTO chats (id, client_id, title, persona, unread_for_admin, last_message_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`, chat.ID, chat.ClientID, chat.Title, chat.Persona, chat.UnreadForAdmin, chat.LastMessageAt)
+	_, err := s.db.Exec(`INSERT INTO chats (id, client_id, title, persona, unread_for_admin, created_at, last_message_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`, chat.ID, chat.ClientID, chat.Title, chat.Persona, chat.UnreadForAdmin, chat.CreatedAt, chat.LastMessageAt)
 	if err != nil {
 		return nil, err
 	}
 	return chat, nil
+}
+
+func (s *Store) countClients() (int64, error) {
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM clients`).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func (s *Store) countChats() (int64, error) {
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM chats`).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func (s *Store) countMessages() (int64, error) {
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func (s *Store) countNewClientsBetween(start, end time.Time) (int64, error) {
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM clients WHERE created_at >= $1 AND created_at < $2`, start, end).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func (s *Store) countNewChatsBetween(start, end time.Time) (int64, error) {
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM chats WHERE created_at >= $1 AND created_at < $2`, start, end).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func (s *Store) countNewMessagesBetween(start, end time.Time) (int64, error) {
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE created_at >= $1 AND created_at < $2`, start, end).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func (s *Store) countActiveClientsByMessagesBetween(start, end time.Time) (int64, error) {
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(DISTINCT c.client_id)
+		FROM messages m
+		JOIN chats c ON c.id = m.chat_id
+		WHERE m.sender = 'client' AND m.created_at >= $1 AND m.created_at < $2`, start, end).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
 }
 
 func (s *Store) listMessages(chatID string) ([]*Message, error) {
@@ -1860,6 +1927,7 @@ func main() {
 	mux.HandleFunc("/api/v1/admin/logout", wrap(handleAdminLogout))
 	mux.HandleFunc("/api/v1/admin/clients", wrap(requireAdminAuth(handleAdminClients)))
 	mux.HandleFunc("/api/v1/admin/chats", wrap(requireAdminAuth(handleAdminChats)))
+	mux.HandleFunc("/api/v1/admin/analytics", wrap(requireAdminAuth(handleAdminAnalytics)))
 	mux.HandleFunc("/api/v1/admin/chats/", wrap(requireAdminAuth(handleAdminChatRoutes)))
 
 	mux.HandleFunc("/api/v1/clients/", wrap(requireClientAuth(handleClientRoutes)))
@@ -2551,6 +2619,178 @@ func handleAdminChats(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, jsonMap{"items": items})
+}
+
+func parseDateUTC(value string) (time.Time, error) {
+	return time.ParseInLocation("2006-01-02", strings.TrimSpace(value), time.UTC)
+}
+
+func dayBoundsUTC(day time.Time) (time.Time, time.Time) {
+	start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
+	return start, start.Add(24 * time.Hour)
+}
+
+func metricsForWindow(start, end time.Time) (jsonMap, error) {
+	newRegistrations, err := store.countNewClientsBetween(start, end)
+	if err != nil {
+		return nil, err
+	}
+	dau, err := store.countActiveClientsByMessagesBetween(start, end)
+	if err != nil {
+		return nil, err
+	}
+	newChats, err := store.countNewChatsBetween(start, end)
+	if err != nil {
+		return nil, err
+	}
+	newMessages, err := store.countNewMessagesBetween(start, end)
+	if err != nil {
+		return nil, err
+	}
+	return jsonMap{
+		"new_registrations": newRegistrations,
+		"dau":               dau,
+		"new_chats":         newChats,
+		"new_messages":      newMessages,
+	}, nil
+}
+
+func handleAdminAnalytics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
+		return
+	}
+
+	nowUTC := time.Now().UTC()
+	defaultDay, _ := dayBoundsUTC(nowUTC)
+	selectedDay := defaultDay
+	if rawDay := strings.TrimSpace(r.URL.Query().Get("day")); rawDay != "" {
+		parsedDay, err := parseDateUTC(rawDay)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid day, expected YYYY-MM-DD"})
+			return
+		}
+		selectedDay = parsedDay
+	}
+	dayStart, dayEnd := dayBoundsUTC(selectedDay)
+
+	periodStart := dayStart.AddDate(0, 0, -6)
+	periodEnd := dayEnd
+	rawFrom := strings.TrimSpace(r.URL.Query().Get("from"))
+	rawTo := strings.TrimSpace(r.URL.Query().Get("to"))
+	if rawFrom != "" || rawTo != "" {
+		if rawFrom == "" || rawTo == "" {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "both from and to are required"})
+			return
+		}
+		parsedFrom, err := parseDateUTC(rawFrom)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid from, expected YYYY-MM-DD"})
+			return
+		}
+		parsedTo, err := parseDateUTC(rawTo)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid to, expected YYYY-MM-DD"})
+			return
+		}
+		if parsedTo.Before(parsedFrom) {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "to must be on or after from"})
+			return
+		}
+		periodStart = parsedFrom
+		_, periodEnd = dayBoundsUTC(parsedTo)
+	}
+
+	dayMetrics, err := metricsForWindow(dayStart, dayEnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	periodMetrics, err := metricsForWindow(periodStart, periodEnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+
+	totalRegistrations, err := store.countClients()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	totalChats, err := store.countChats()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	totalMessages, err := store.countMessages()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+
+	todayStart, todayEnd := dayBoundsUTC(nowUTC)
+	yesterdayStart := todayStart.AddDate(0, 0, -1)
+	yesterdayEnd := todayStart
+
+	todayRegs, err := store.countNewClientsBetween(todayStart, todayEnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	yesterdayRegs, err := store.countNewClientsBetween(yesterdayStart, yesterdayEnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	todayChats, err := store.countNewChatsBetween(todayStart, todayEnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	yesterdayChats, err := store.countNewChatsBetween(yesterdayStart, yesterdayEnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	todayMessages, err := store.countNewMessagesBetween(todayStart, todayEnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	yesterdayMessages, err := store.countNewMessagesBetween(yesterdayStart, yesterdayEnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, jsonMap{
+		"day": dayStart.Format("2006-01-02"),
+		"period": jsonMap{
+			"from": periodStart.Format("2006-01-02"),
+			"to":   periodEnd.Add(-time.Nanosecond).Format("2006-01-02"),
+		},
+		"day_metrics":    dayMetrics,
+		"period_metrics": periodMetrics,
+		"totals": jsonMap{
+			"registrations": totalRegistrations,
+			"chats":         totalChats,
+			"messages":      totalMessages,
+		},
+		"today": jsonMap{
+			"new_registrations": jsonMap{
+				"value": todayRegs,
+				"delta": todayRegs - yesterdayRegs,
+			},
+			"new_chats": jsonMap{
+				"value": todayChats,
+				"delta": todayChats - yesterdayChats,
+			},
+			"new_messages": jsonMap{
+				"value": todayMessages,
+				"delta": todayMessages - yesterdayMessages,
+			},
+		},
+	})
 }
 
 func handleAdminChatRoutes(w http.ResponseWriter, r *http.Request) {

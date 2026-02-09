@@ -1,6 +1,6 @@
 import { Routes, Route, Link, Navigate, useLocation } from 'react-router-dom'
 import { useEffect, useState } from 'react'
-import { getAccessToken, getClientId, getLastChatId, getSession } from './lib/api'
+import { getAccessToken, getLastChatId, getSession } from './lib/api'
 import LoginPage from './pages/LoginPage'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import ChatsPage from './pages/ChatsPage'
@@ -14,15 +14,20 @@ export default function App() {
   const location = useLocation()
   const [sessionReady, setSessionReady] = useState(false)
   const [authed, setAuthed] = useState(false)
-  const localAuthed = Boolean(getAccessToken())
-  const canAccess = authed || localAuthed
+  const hasLocalToken = Boolean(getAccessToken())
+  const homeRedirect = getLastChatId() ? `/chats/${getLastChatId()}` : '/chats'
+
   useEffect(() => {
     let active = true
     setSessionReady(false)
-    if (localAuthed) {
-      setAuthed(true)
+    if (!hasLocalToken) {
+      setAuthed(false)
       setSessionReady(true)
+      return () => {
+        active = false
+      }
     }
+
     getSession()
       .then((data) => {
         if (active) setAuthed(Boolean(data?.client_id))
@@ -30,10 +35,11 @@ export default function App() {
       .finally(() => {
         if (active) setSessionReady(true)
       })
+
     return () => {
       active = false
     }
-  }, [location.pathname])
+  }, [location.pathname, hasLocalToken])
   const isMobileRoute =
     location.pathname === '/' ||
     location.pathname.startsWith('/login') ||
@@ -61,21 +67,21 @@ export default function App() {
           <Route
             path="/"
             element={
-              canAccess
-                ? <Navigate to={getLastChatId() ? `/chats/${getLastChatId()}` : '/chats'} replace />
+              authed
+                ? <Navigate to={homeRedirect} replace />
                 : <Navigate to="/login" replace />
             }
           />
-          <Route path="/login" element={canAccess ? <Navigate to="/chats" replace /> : <LoginPage />} />
-          <Route path="/forgot" element={canAccess ? <Navigate to="/chats" replace /> : <ForgotPasswordPage />} />
-          <Route path="/register" element={canAccess ? <Navigate to="/chats" replace /> : <RegisterPage />} />
-          <Route path="/reset" element={canAccess ? <Navigate to="/chats" replace /> : <ResetPasswordPage />} />
-          <Route path="/reset-password" element={canAccess ? <Navigate to="/chats" replace /> : <ResetPasswordPage />} />
+          <Route path="/login" element={authed ? <Navigate to={homeRedirect} replace /> : <LoginPage />} />
+          <Route path="/forgot" element={authed ? <Navigate to={homeRedirect} replace /> : <ForgotPasswordPage />} />
+          <Route path="/register" element={authed ? <Navigate to={homeRedirect} replace /> : <RegisterPage />} />
+          <Route path="/reset" element={authed ? <Navigate to={homeRedirect} replace /> : <ResetPasswordPage />} />
+          <Route path="/reset-password" element={authed ? <Navigate to={homeRedirect} replace /> : <ResetPasswordPage />} />
           <Route path="/auth/google/callback" element={<GoogleCallbackPage />} />
           <Route path="/auth/google/callback/*" element={<GoogleCallbackPage />} />
-          <Route path="/chats" element={canAccess ? <ChatsPage /> : <Navigate to="/login" replace />} />
-          <Route path="/chats/new" element={canAccess ? <NewChatPage /> : <Navigate to="/login" replace />} />
-          <Route path="/chats/:id" element={canAccess ? <ChatDetailPage /> : <Navigate to="/login" replace />} />
+          <Route path="/chats" element={authed ? <ChatsPage /> : <Navigate to="/login" replace />} />
+          <Route path="/chats/new" element={authed ? <NewChatPage /> : <Navigate to="/login" replace />} />
+          <Route path="/chats/:id" element={authed ? <ChatDetailPage /> : <Navigate to="/login" replace />} />
         </Routes>
       </main>
     </div>

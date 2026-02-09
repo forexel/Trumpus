@@ -6,6 +6,7 @@ const CLIENT_EMAIL_KEY = 'client_email'
 const ACCESS_TOKEN_KEY = 'access_token'
 const REFRESH_TOKEN_KEY = 'refresh_token'
 const ACCESS_EXPIRES_KEY = 'access_expires'
+let hardLogoutInFlight: Promise<void> | null = null
 
 export type ChatSummary = {
   id: string
@@ -62,6 +63,51 @@ export function clearClientSession() {
   localStorage.removeItem(CLIENT_EMAIL_KEY)
 }
 
+function redirectToLogin() {
+  if (window.location.pathname === '/login') return
+  window.location.replace('/login')
+}
+
+export async function hardLogout() {
+  if (hardLogoutInFlight) return hardLogoutInFlight
+
+  hardLogoutInFlight = (async () => {
+    try {
+      try {
+        ;(window as any).__TRUMPUS_WS__?.close?.()
+      } catch {}
+
+      try {
+        localStorage.clear()
+      } catch {}
+      try {
+        sessionStorage.clear()
+      } catch {}
+
+      const controller = new AbortController()
+      const timeoutId = window.setTimeout(() => controller.abort(), 1500)
+
+      try {
+        await fetch(`${API_BASE}/auth/logout`, {
+          method: 'POST',
+          credentials: 'include',
+          signal: controller.signal,
+        })
+      } catch {
+        // Ignore network/auth failures: client-side cleanup and redirect are mandatory.
+      } finally {
+        window.clearTimeout(timeoutId)
+      }
+
+      redirectToLogin()
+    } finally {
+      hardLogoutInFlight = null
+    }
+  })()
+
+  return hardLogoutInFlight
+}
+
 async function refreshAccessToken() {
   const refreshToken = getRefreshToken()
   const res = await fetch(`${API_BASE}/auth/refresh`, {
@@ -90,14 +136,22 @@ async function fetchWithAuth(input: string, init: RequestInit = {}) {
   if (res.status !== 401) return res
 
   const refreshed = await refreshAccessToken()
-  if (!refreshed) return res
+  if (!refreshed) {
+    await hardLogout()
+    throw new Error('unauthorized')
+  }
   const retryHeaders = new Headers(init.headers ?? {})
   const newToken = getAccessToken()
   if (newToken) retryHeaders.set('Authorization', `Bearer ${newToken}`)
   if (!retryHeaders.has('Content-Type') && init.body) {
     retryHeaders.set('Content-Type', 'application/json')
   }
-  return fetch(input, { ...init, headers: retryHeaders, credentials: 'include' })
+  const retryRes = await fetch(input, { ...init, headers: retryHeaders, credentials: 'include' })
+  if (retryRes.status === 401) {
+    await hardLogout()
+    throw new Error('unauthorized')
+  }
+  return retryRes
 }
 
 export function getLastChatId() {
@@ -124,8 +178,7 @@ export async function getSession() {
     }
   }
   if (!res.ok) {
-    clearAuthTokens()
-    clearClientSession()
+    await hardLogout()
     return null
   }
   const data = (await res.json()) as { client_id: string; email: string }
@@ -134,9 +187,7 @@ export async function getSession() {
 }
 
 export async function logout() {
-  await fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' })
-  clearAuthTokens()
-  clearClientSession()
+  await hardLogout()
 }
 
 export async function fetchChats(clientId: string) {
