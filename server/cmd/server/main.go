@@ -770,13 +770,16 @@ func buildResetLink(base, token string) string {
 }
 
 func sendResetEmail(to, link string) error {
-	cfg, err := smtpConfigFromEnv()
-	if err != nil {
-		return err
-	}
-	subject := "Reset your Trumpus password"
-	body := fmt.Sprintf("Use this link to reset your password:\n\n%s\n\nIf you did not request this, ignore this email.", link)
-	return sendSMTPMail(cfg, to, subject, body)
+    cfg, err := smtpConfigFromEnv()
+    if err != nil {
+        return err
+    }
+    subject := "Change Password"
+    body := fmt.Sprintf(
+        "Your link for changing password is valid for 1 hour:\n\n%s\n\nIf you didn’t request this, you can safely ignore this email.",
+        link,
+    )
+    return sendSMTPMail(cfg, to, subject, body)
 }
 
 func sendSMTPMail(cfg *smtpConfig, to, subject, body string) error {
