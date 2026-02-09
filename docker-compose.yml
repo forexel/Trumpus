@@ -1,5 +1,4 @@
 version: "3.9"
-
 services:
   redis:
     image: redis:7.2-alpine
@@ -8,7 +7,6 @@ services:
       - "6379:6379"
     volumes:
       - trumpus_redisdata:/data
-
   db:
     image: postgres:16
     container_name: trumpus_db
@@ -20,12 +18,14 @@ services:
       - "5433:5432"
     volumes:
       - trumpus_pgdata:/var/lib/postgresql/data
-
   api:
     build:
       context: ./server
       dockerfile: Dockerfile
     container_name: trumpus_api
+    env_file:
+      - .env
+
     environment:
       DATABASE_URL: postgresql://trumpus:trumpus@db:5432/trumpus?sslmode=disable
       PORT: 8000
@@ -34,81 +34,87 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
       COOKIE_SECURE: "false"
-      CORS_ORIGINS: http://localhost:5173,http://localhost:5174
-      OAUTH_REDIRECT_ALLOWLIST: http://localhost:5173
+      CORS_ORIGINS: "https://trumpus.tech,https://admin.trumpus.tech"
+      OAUTH_REDIRECT_ALLOWLIST: "https://trumpus.tech,https://admin.trumpus.tech"
       TRUST_PROXY: "false"
       GOOGLE_CLIENT_ID: 813736117005-jm3t8ousstjbra6tcbe2hpi6khoeqhor.apps.googleusercontent.com
       GOOGLE_CLIENT_SECRET: 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
-      GOOGLE_OAUTH_CALLBACK_URL: https://app.privetsuper.ru:18000/api/v1/auth/google/callback
-      LLM_BASE: http://llm:8010
+      GOOGLE_OAUTH_CALLBACK_URL: "https://trumpus.tech/api/v1/auth/google/callback"
+      LLM_BASE: "http://llm:8010"
+      APP_URL: ""
+      PUBLIC_URL: ""
+      FRONTEND_URL: ""
+      CLIENT_URL: ""
     ports:
       - "8000:8000"
     depends_on:
       - db
       - redis
-
+    restart: unless-stopped
   worker:
     build:
       context: ./server
       dockerfile: Dockerfile
     container_name: trumpus_worker
+    env_file:
+      - .env
+
     environment:
       DATABASE_URL: postgresql://trumpus:trumpus@db:5432/trumpus?sslmode=disable
       REDIS_URL: redis://redis:6379/0
-      LLM_BASE: http://llm:8010
+      LLM_BASE: "http://llm:8010"
       RUN_MODE: worker
       JWT_SECRET: ${JWT_SECRET:-dev-secret}
     depends_on:
       - db
       - redis
       - llm
-
   admin-web:
     build:
       context: ./admin-web
       dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: /api/v1
     container_name: trumpus_admin_web
-    environment:
-      VITE_API_BASE: https://app.privetsuper.ru:18000/api/v1
-    ports:
-      - "5174:5174"
+    restart: unless-stopped
     depends_on:
       - api
-
+    expose:
+      - "80"
   client-web:
     build:
       context: ./client-web
       dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: /api/v1
     container_name: trumpus_client_web
-    environment:
-      VITE_API_BASE: https://app.privetsuper.ru:18000/api/v1
-    ports:
-      - "5173:5173"
+    restart: unless-stopped
     depends_on:
       - api
-
+    expose:
+      - "80"
   llm:
     build:
       context: ./llm
       dockerfile: Dockerfile
     container_name: trumpus_llm
+    env_file:
+      - .env.llm
     environment:
       API_BASE: http://api:8000/api/v1
       PORT: 8010
-      LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+      LLM_PROVIDER: openrouter
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-oss-120b:free}
-      OPENROUTER_MODEL_PRIMARY: ${OPENROUTER_MODEL_PRIMARY:-}
-      OPENROUTER_MODEL_FALLBACK: ${OPENROUTER_MODEL_FALLBACK:-}
-      OPENROUTER_MODEL_FALLBACK_2: ${OPENROUTER_MODEL_FALLBACK_2:-}
-      OPENROUTER_MODEL_FALLBACK_3: ${OPENROUTER_MODEL_FALLBACK_3:-}
+      OPENROUTER_MODEL: "openai/gpt-oss-120b:free"
+      OPENROUTER_MODEL_PRIMARY: "openai/gpt-oss-120b:free"
+      OPENROUTER_MODEL_FALLBACK: "Qwen/Qwen3-4B:free"
+      OPENROUTER_MODEL_FALLBACK_2: "meta-llama/llama-3.2-3b-instruct:free"
+      OPENROUTER_MODEL_FALLBACK_3: "openai/gpt-4o-mini"
     ports:
       - "8010:8010"
     depends_on:
       - api
-
   caddy:
     image: caddy:2
     container_name: trumpus_caddy
@@ -123,7 +129,6 @@ services:
       - api
       - client-web
       - admin-web
-
 volumes:
   trumpus_pgdata:
   trumpus_redisdata:

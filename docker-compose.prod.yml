@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   db:
     image: postgres:16
@@ -22,8 +20,6 @@ services:
     environment:
       DATABASE_URL: postgresql://trumpus:trumpus@db:5432/trumpus?sslmode=disable
       PORT: 8000
-
-      # ВАЖНО: используем внешний redis контейнер "redis" из твоего /srv/redis
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
 
       JWT_SECRET: ${JWT_SECRET}
@@ -33,14 +29,9 @@ services:
       COOKIE_SECURE: "true"
       TRUST_PROXY: "true"
 
-      # Потом заменим на домены. Пока можно временно так:
-      CORS_ORIGINS: http://localhost,http://127.0.0.1
-      OAUTH_REDIRECT_ALLOWLIST: http://localhost
-
-      # Google/OAuth позже аккуратно настроим, лучше убрать пока, чтобы не ломало старт
-      GOOGLE_CLIENT_ID:
-      GOOGLE_CLIENT_SECRET:
-      GOOGLE_OAUTH_CALLBACK_URL:
+      # прод:
+      CORS_ORIGINS: https://trumpus.tech,https://admin.trumpus.tech
+      OAUTH_REDIRECT_ALLOWLIST: https://trumpus.tech
 
       LLM_BASE: http://llm:8010
     depends_on:
@@ -49,14 +40,6 @@ services:
       - apps
       - web
     restart: unless-stopped
-
-    labels:
-      - "traefik.enable=true"
-      # временно без домена: роутим по Host header, позже заменим на trumpus.tech
-      - "traefik.http.routers.trumpus-api.rule=Host(`api.trumpus.tech`)"
-      - "traefik.http.routers.trumpus-api.entrypoints=websecure"
-      - "traefik.http.routers.trumpus-api.tls=true"
-      - "traefik.http.services.trumpus-api.loadbalancer.server.port=8000"
 
   worker:
     build:
@@ -86,7 +69,12 @@ services:
       PORT: 8010
       LLM_PROVIDER: openrouter
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-      OPENROUTER_MODEL: ${OPENROUTER_MODEL}
+      OPENROUTER_MODEL_PRIMARY: ${OPENROUTER_MODEL_PRIMARY}
+      OPENROUTER_MODEL_FALLBACK: ${OPENROUTER_MODEL_FALLBACK}
+      OPENROUTER_MODEL_FALLBACK_2: ${OPENROUTER_MODEL_FALLBACK_2}
+      OPENROUTER_MODEL_FALLBACK_3: ${OPENROUTER_MODEL_FALLBACK_3}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL}
     depends_on:
       - api
     networks:
@@ -105,12 +93,6 @@ services:
     networks:
       - web
     restart: unless-stopped
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.trumpus-web.rule=Host(`trumpus.tech`)"
-      - "traefik.http.routers.trumpus-web.entrypoints=websecure"
-      - "traefik.http.routers.trumpus-web.tls=true"
-      - "traefik.http.services.trumpus-web.loadbalancer.server.port=5173"
 
   admin-web:
     build:
@@ -124,15 +106,29 @@ services:
     networks:
       - web
     restart: unless-stopped
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.trumpus-admin.rule=Host(`admin.trumpus.tech`)"
-      - "traefik.http.routers.trumpus-admin.entrypoints=websecure"
-      - "traefik.http.routers.trumpus-admin.tls=true"
-      - "traefik.http.services.trumpus-admin.loadbalancer.server.port=5174"
+
+  caddy:
+    image: caddy:2
+    container_name: trumpus_caddy
+    restart: unless-stopped
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - web
+    depends_on:
+      - client-web
+      - admin-web
+      - api
 
 volumes:
   trumpus_pgdata:
+  caddy_data:
+  caddy_config:
 
 networks:
   web:
