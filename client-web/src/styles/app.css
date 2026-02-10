@@ -145,8 +145,8 @@ body::before {
   right: 0;
   top: 0;
   z-index: 30;
-  padding-top: calc(12px + env(safe-area-inset-top));
-  min-height: calc(56px + env(safe-area-inset-top));
+  padding-top: 9px;
+  min-height: 51px;
 }
 
 .mobile-header > * {
@@ -674,7 +674,7 @@ body::before {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding-top: calc(56px + env(safe-area-inset-top));
+  padding-top: 51px;
 }
 
 .new-chat-content {
@@ -806,7 +806,7 @@ body::before {
   inset: 0;
   background: var(--bg);
   overflow: hidden;
-  padding-top: calc(56px + env(safe-area-inset-top));
+  padding-top: 51px;
 }
 
 .chat-header {

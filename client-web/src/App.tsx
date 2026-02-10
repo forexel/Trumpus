@@ -60,7 +60,8 @@ export default function App() {
     const vv = window.visualViewport
 
     const updateAppHeight = () => {
-      root.style.setProperty('--app-vh', `${Math.round(window.innerHeight)}px`)
+      const viewportHeight = vv ? vv.height + vv.offsetTop : window.innerHeight
+      root.style.setProperty('--app-vh', `${Math.round(viewportHeight)}px`)
     }
 
     const updateKeyboardOffset = () => {
@@ -79,21 +80,29 @@ export default function App() {
       }
       const viewportBottom = vv.height + vv.offsetTop
       const rawInset = Math.max(0, window.innerHeight - viewportBottom)
-      const keyboardOffset = rawInset > 80 ? rawInset : 0
+      const keyboardOffset = rawInset > 140 ? rawInset : 0
       root.style.setProperty('--kb-offset', `${Math.round(keyboardOffset)}px`)
     }
 
     updateAppHeight()
     updateKeyboardOffset()
+    vv?.addEventListener('resize', updateAppHeight)
+    vv?.addEventListener('scroll', updateAppHeight)
     vv?.addEventListener('resize', updateKeyboardOffset)
     vv?.addEventListener('scroll', updateKeyboardOffset)
     window.addEventListener('orientationchange', updateAppHeight)
     window.addEventListener('resize', updateAppHeight)
+    document.addEventListener('focusin', updateKeyboardOffset)
+    document.addEventListener('focusout', updateKeyboardOffset)
     return () => {
+      vv?.removeEventListener('resize', updateAppHeight)
+      vv?.removeEventListener('scroll', updateAppHeight)
       vv?.removeEventListener('resize', updateKeyboardOffset)
       vv?.removeEventListener('scroll', updateKeyboardOffset)
       window.removeEventListener('orientationchange', updateAppHeight)
       window.removeEventListener('resize', updateAppHeight)
+      document.removeEventListener('focusin', updateKeyboardOffset)
+      document.removeEventListener('focusout', updateKeyboardOffset)
     }
   }, [])
 
