@@ -19,7 +19,9 @@ export default function App() {
   useEffect(() => {
     let active = true
     setSessionReady(false)
-    getSession()
+    const checkSession = () => getSession()
+
+    checkSession()
       .then((data) => {
         if (active) setAuthed(Boolean(data?.client_id))
       })
@@ -30,35 +32,29 @@ export default function App() {
         if (active) setSessionReady(true)
       })
 
+    const onFocus = () => {
+      checkSession()
+        .then((data) => {
+          if (active) setAuthed(Boolean(data?.client_id))
+        })
+        .catch(() => {
+          if (active) setAuthed(false)
+        })
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') onFocus()
+    }
+
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+
     return () => {
       active = false
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [location.pathname])
 
-  useEffect(() => {
-    const root = document.documentElement
-    const vv = window.visualViewport
-    if (!vv) {
-      root.style.setProperty('--vvb', '0px')
-      return
-    }
-
-    const updateViewportVars = () => {
-      const rawInset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
-      const keyboardInset = rawInset > 120 ? rawInset : 0
-      root.style.setProperty('--vvb', `${Math.round(keyboardInset)}px`)
-    }
-
-    updateViewportVars()
-    vv.addEventListener('resize', updateViewportVars)
-    vv.addEventListener('scroll', updateViewportVars)
-    window.addEventListener('orientationchange', updateViewportVars)
-    return () => {
-      vv.removeEventListener('resize', updateViewportVars)
-      vv.removeEventListener('scroll', updateViewportVars)
-      window.removeEventListener('orientationchange', updateViewportVars)
-    }
-  }, [])
   const isMobileRoute =
     location.pathname === '/' ||
     location.pathname.startsWith('/login') ||
