@@ -89,6 +89,7 @@ export default function App() {
     const updateAppHeight = () => {
       const viewportHeight = vv ? vv.height + vv.offsetTop : window.innerHeight
       root.style.setProperty('--app-vh', `${Math.round(viewportHeight)}px`)
+      root.style.setProperty('--vv-top', `${Math.round(vv?.offsetTop ?? 0)}px`)
     }
 
     const updateKeyboardOffset = () => {

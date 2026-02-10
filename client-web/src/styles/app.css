@@ -24,6 +24,7 @@
   --header-bg: #111111;
   --shadow: rgba(0, 0, 0, 0.5);
   --app-vh: 100svh;
+  --vv-top: 0px;
   --kb-offset: 0px;
 }
 
@@ -143,9 +144,9 @@ body::before {
   position: fixed;
   left: 0;
   right: 0;
-  top: 0;
+  top: var(--vv-top, 0px);
   z-index: 30;
-  padding-top: 9px;
+  padding-top: 4px;
   min-height: 51px;
 }
 
@@ -670,11 +671,14 @@ body::before {
    ============================================ */
 .new-chat-page {
   position: fixed;
-  inset: 0;
+  left: 0;
+  right: 0;
+  top: var(--vv-top, 0px);
+  bottom: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding-top: 51px;
+  padding-top: 0;
 }
 
 .new-chat-content {
@@ -683,7 +687,7 @@ body::before {
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  padding-top: 16px;
+  padding-top: 59px;
   padding-bottom: 12px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -803,10 +807,13 @@ body::before {
    ============================================ */
 .chat-page {
   position: fixed;
-  inset: 0;
+  left: 0;
+  right: 0;
+  top: var(--vv-top, 0px);
+  bottom: 0;
   background: var(--bg);
   overflow: hidden;
-  padding-top: 51px;
+  padding-top: 0;
 }
 
 .chat-header {
@@ -818,7 +825,7 @@ body::before {
   min-height: 0;
   overflow-y: auto;
   padding: 16px;
-  padding-top: 12px;
+  padding-top: 59px;
   padding-bottom: 12px;
   display: flex;
   flex-direction: column;
@@ -1183,7 +1190,7 @@ button.ghost:hover {
   }
 
   .chat-messages {
-    padding-top: 10px;
+    padding-top: 56px;
     padding-bottom: 10px;
   }
 
@@ -1193,7 +1200,7 @@ button.ghost:hover {
   }
 
   .new-chat-content {
-    padding-top: 10px;
+    padding-top: 56px;
     padding-bottom: 10px;
   }
 }
@@ -1217,7 +1224,7 @@ button.ghost:hover {
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  padding-top: 16px;
+  padding-top: 59px;
   padding-bottom: 12px;
 }
 
