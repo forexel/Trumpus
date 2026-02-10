@@ -282,8 +282,10 @@ html, body {
 .auth-links {
   margin-top: 14px;
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
+  gap: 18px;
+  flex-wrap: nowrap;
   padding-top: 12px;
   border-top: 2px solid #002868;
 }
@@ -363,6 +365,7 @@ html, body {
   font-weight: 600;
   text-decoration: none;
   font-size: 14px;
+  white-space: nowrap;
   transition: color 0.2s;
 }
 
@@ -450,8 +453,14 @@ html, body {
   }
   
   .auth-links {
-    flex-direction: column;
+    justify-content: center;
     gap: 12px;
+    flex-wrap: nowrap;
+  }
+
+  .auth-links a,
+  .auth-links .linkish {
+    font-size: 13px;
   }
 }
 
