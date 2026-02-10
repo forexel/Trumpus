@@ -1,3 +1,4 @@
+import asyncio
 import os
 import random
 import time
@@ -6,8 +7,6 @@ import httpx
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 
-API_BASE = os.getenv("API_BASE", "http://api:8000/api/v1").rstrip("/")
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "admin-token")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openrouter").strip().lower()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
@@ -18,7 +17,7 @@ OPENROUTER_MODEL_FALLBACK_2 = os.getenv("OPENROUTER_MODEL_FALLBACK_2", "").strip
 OPENROUTER_MODEL_FALLBACK_3 = os.getenv("OPENROUTER_MODEL_FALLBACK_3", "").strip()
 
 CONNECT_TIMEOUT = float(os.getenv("OPENROUTER_CONNECT_TIMEOUT", "5"))
-READ_TIMEOUT = float(os.getenv("OPENROUTER_READ_TIMEOUT", "5"))
+READ_TIMEOUT = float(os.getenv("OPENROUTER_READ_TIMEOUT", "30"))
 WRITE_TIMEOUT = float(os.getenv("OPENROUTER_WRITE_TIMEOUT", "10"))
 POOL_TIMEOUT = float(os.getenv("OPENROUTER_POOL_TIMEOUT", "5"))
 
@@ -371,11 +370,11 @@ async def respond(req: RespondRequest, response: Response):
             retry_after = last_error.get("retry_after")
         if retry_after:
             try:
-                time.sleep(float(retry_after))
+                await asyncio.sleep(float(retry_after))
             except ValueError:
                 pass
         else:
-            time.sleep(delay + random.random() * (0.2 * delay))
+            await asyncio.sleep(delay + random.random() * (0.2 * delay))
             delay = min(delay * 2, MAX_DELAY)
 
     if last_error:

@@ -58,6 +58,9 @@ html, body {
   align-items: center;
   gap: 16px;
   margin-top: -104px;
+  max-height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .auth-brand {
@@ -331,7 +334,26 @@ html, body {
 
 @media (max-width: 420px) {
   .store-buttons {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .store-button {
+    padding: 8px 8px;
+    gap: 6px;
+  }
+
+  .store-label {
+    font-size: 11px;
+  }
+
+  .store-sub {
+    font-size: 9px;
+  }
+
+  .store-button img {
+    width: 20px;
+    height: 20px;
   }
 }
 
@@ -433,10 +455,53 @@ html, body {
   }
 }
 
+/* Small height screens (landscape / short phones) */
+@media (max-height: 700px) {
+  .auth-content {
+    margin-top: 0;
+    gap: 8px;
+  }
+
+  .auth-eagle {
+    width: 48px;
+    height: 48px;
+    margin-bottom: -12px;
+  }
+
+  .auth-brand-text {
+    font-size: 32px;
+  }
+
+  .auth-card {
+    padding: 16px 18px;
+  }
+
+  .auth-card h1 {
+    font-size: 22px;
+    margin-bottom: 10px;
+  }
+
+  .auth-card input {
+    padding: 9px 12px;
+    font-size: 13px;
+  }
+
+  .btn-primary,
+  .btn-google {
+    min-height: 40px;
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+
+  .store-buttons {
+    margin-top: 8px;
+  }
+}
+
 /* Safe area support for notched devices */
 @supports (padding-top: env(safe-area-inset-top)) {
   .auth-screen {
-    padding-top: calc(40px + env(safe-area-inset-top));
-    padding-bottom: calc(40px + env(safe-area-inset-bottom));
+    padding-top: calc(12px + env(safe-area-inset-top));
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
   }
 }
