@@ -11,7 +11,7 @@ RUN npm run build
 FROM nginx:1.27-alpine
 COPY --from=build /app/dist /usr/share/nginx/html
 
-RUN cat >/etc/nginx/conf.d/default.conf <<'EOF'
+RUN cat >/etc/nginx/conf.d/default.conf <<'EOF2'
 server {
   listen 80;
   server_name _;
@@ -22,4 +22,4 @@ server {
     try_files $uri $uri/ /index.html;
   }
 }
-EOF
+EOF2
