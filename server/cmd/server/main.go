@@ -623,6 +623,19 @@ func (s *Store) listMessages(chatID string) ([]*Message, error) {
 	return out, nil
 }
 
+func (s *Store) getMessageByID(messageID string) (*Message, error) {
+	var m Message
+	err := s.db.QueryRow(`SELECT id, chat_id, sender, content, created_at FROM messages WHERE id=$1`, messageID).
+		Scan(&m.ID, &m.ChatID, &m.Sender, &m.Content, &m.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &m, nil
+}
+
 func (s *Store) insertMessage(chatID, sender, content string, createdAt time.Time) (*Message, error) {
 	msg := &Message{
 		ID:        nextID("msg"),
@@ -1375,27 +1388,35 @@ func bearerToken(raw string) string {
 }
 
 func clientTokenFromRequest(r *http.Request) string {
+	if token := readCookieValue(r, "access_token"); token != "" {
+		return token
+	}
 	if token := bearerToken(r.Header.Get("Authorization")); token != "" {
 		return token
 	}
-	return readCookieValue(r, "access_token")
+	return ""
 }
 
 func adminTokenFromRequest(r *http.Request) string {
+	if token := readCookieValue(r, "admin_token"); token != "" {
+		return token
+	}
 	if token := bearerToken(r.Header.Get("Authorization")); token != "" {
 		return token
 	}
-	return readCookieValue(r, "admin_token")
+	return ""
 }
 
 func requireAdminAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := adminTokenFromRequest(r)
 		if token == "" {
+			clearAdminCookie(w)
 			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 			return
 		}
 		if _, err := parseToken(token, "admin"); err != nil {
+			clearAdminCookie(w)
 			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 			return
 		}
@@ -1407,21 +1428,25 @@ func requireClientAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		raw := strings.TrimSpace(r.Header.Get("Authorization"))
 		if len(raw) > maxAuthHeaderSize {
+			clearAuthCookies(w)
 			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 			return
 		}
 		token := clientTokenFromRequest(r)
 		if token == "" {
+			clearAuthCookies(w)
 			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 			return
 		}
 		claims, err := parseToken(token, "access")
 		if err != nil {
+			clearAuthCookies(w)
 			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 			return
 		}
 		clientID, _ := claims["sub"].(string)
 		if clientID == "" {
+			clearAuthCookies(w)
 			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 			return
 		}
@@ -1639,16 +1664,19 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	if !isAdmin {
 		token := clientTokenFromRequest(r)
 		if token == "" {
+			clearAuthCookies(w)
 			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 			return
 		}
 		claims, err := parseToken(token, "access")
 		if err != nil {
+			clearAuthCookies(w)
 			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 			return
 		}
 		clientID, _ = claims["sub"].(string)
 		if clientID == "" {
+			clearAuthCookies(w)
 			writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 			return
 		}
@@ -1672,6 +1700,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if chat == nil || chat.ClientID != clientID {
+				clearAuthCookies(w)
 				writeJSON(w, http.StatusForbidden, jsonMap{"error": "forbidden"})
 				return
 			}
@@ -1816,17 +1845,20 @@ func handleClientSession(w http.ResponseWriter, r *http.Request) {
 	}
 	token := clientTokenFromRequest(r)
 	if token == "" {
+		clearAuthCookies(w)
 		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 		return
 	}
 	claims, err := parseToken(token, "access")
 	if err != nil {
+		clearAuthCookies(w)
 		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 		return
 	}
 	clientID, _ := claims["sub"].(string)
 	email, _ := claims["email"].(string)
 	if clientID == "" || email == "" {
+		clearAuthCookies(w)
 		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 		return
 	}
@@ -1849,10 +1881,12 @@ func handleAdminSession(w http.ResponseWriter, r *http.Request) {
 	}
 	token := adminTokenFromRequest(r)
 	if token == "" {
+		clearAdminCookie(w)
 		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 		return
 	}
 	if _, err := parseToken(token, "admin"); err != nil {
+		clearAdminCookie(w)
 		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
 		return
 	}
@@ -2807,14 +2841,24 @@ func handleAdminChatRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	switch parts[1] {
 	case "messages":
-		if r.Method == http.MethodGet {
-			handleAdminChatMessages(w, r, chatID)
+		if len(parts) == 2 {
+			if r.Method == http.MethodGet {
+				handleAdminChatMessages(w, r, chatID)
+				return
+			}
+			if r.Method == http.MethodPost {
+				handleAdminSendMessage(w, r, chatID)
+				return
+			}
+			writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
 			return
 		}
-		if r.Method == http.MethodPost {
-			handleAdminSendMessage(w, r, chatID)
+		if len(parts) == 4 && parts[3] == "resend" && r.Method == http.MethodPost {
+			handleAdminResendMessage(w, r, chatID, parts[2])
 			return
 		}
+		writeJSON(w, http.StatusNotFound, jsonMap{"error": "not found"})
+		return
 	case "read":
 		if r.Method == http.MethodPost {
 			handleAdminMarkRead(w, r, chatID)
@@ -2822,6 +2866,53 @@ func handleAdminChatRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
+}
+
+func handleAdminResendMessage(w http.ResponseWriter, r *http.Request, chatID, messageID string) {
+	chat, err := store.getChatByID(chatID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if chat == nil {
+		writeJSON(w, http.StatusNotFound, jsonMap{"error": "chat not found"})
+		return
+	}
+
+	msg, err := store.getMessageByID(messageID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if msg == nil || msg.ChatID != chatID {
+		writeJSON(w, http.StatusNotFound, jsonMap{"error": "message not found"})
+		return
+	}
+	if msg.Sender != "client" {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "only client messages can be resent"})
+		return
+	}
+
+	job := LLMJob{
+		ChatID:    chatID,
+		Persona:   chat.Persona,
+		Content:   msg.Content,
+		RequestID: nextID("admin_resend"),
+	}
+	if err := enqueueLLMJob(job); err != nil {
+		go func(j LLMJob) {
+			if err := processLLMJob(j); err != nil {
+				log.Printf("llm_fallback_error req_id=%s chat_id=%s err=%v", j.RequestID, j.ChatID, err)
+			}
+		}(job)
+	}
+
+	writeJSON(w, http.StatusOK, jsonMap{
+		"ok":         true,
+		"queued":     true,
+		"chat_id":    chatID,
+		"message_id": messageID,
+	})
 }
 
 func handleAdminChatMessages(w http.ResponseWriter, r *http.Request, chatID string) {
