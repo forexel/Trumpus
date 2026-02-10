@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { fetchChatMessages, markChatRead, sendChatMessage, getWsBase, Message, AdminChat } from '../lib/api'
+import { fetchChatMessages, markChatRead, sendChatMessage, resendClientMessage, getWsBase, Message, AdminChat } from '../lib/api'
 
 type ChatDetailProps = {
   chatId?: string
@@ -14,6 +14,7 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
   const [chat, setChat] = useState<AdminChat | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [content, setContent] = useState('')
+  const [resendingId, setResendingId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const markdownComponents = useMemo(
@@ -90,6 +91,18 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
     }
   }
 
+  async function onResend(messageId: string) {
+    if (!chatId || !messageId) return
+    setResendingId(messageId)
+    try {
+      await resendClientMessage(chatId, messageId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to resend to LLM')
+    } finally {
+      setResendingId('')
+    }
+  }
+
   if (loading) {
     return <div className="card">Loading chat...</div>
   }
@@ -121,7 +134,18 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
               {msg.content}
             </ReactMarkdown>
-            <div className="msg-meta">{new Date(msg.created_at).toLocaleTimeString()}</div>
+            <div className="msg-footer">
+              <div className="msg-meta">{new Date(msg.created_at).toLocaleTimeString()}</div>
+              {msg.sender === 'client' ? (
+                <button
+                  className="msg-resend-btn"
+                  onClick={() => onResend(msg.id)}
+                  disabled={resendingId === msg.id}
+                >
+                  {resendingId === msg.id ? 'Resending...' : 'Resend'}
+                </button>
+              ) : null}
+            </div>
           </div>
         ))}
       </div>

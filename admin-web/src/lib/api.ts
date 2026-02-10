@@ -110,6 +110,12 @@ export async function sendChatMessage(chatId: string, content: string) {
   }) as Promise<Message>
 }
 
+export async function resendClientMessage(chatId: string, messageId: string) {
+  return apiFetch(`/admin/chats/${chatId}/messages/${messageId}/resend`, {
+    method: 'POST',
+  }) as Promise<{ ok: boolean; queued: boolean; chat_id: string; message_id: string }>
+}
+
 export async function markChatRead(chatId: string) {
   return apiFetch(`/admin/chats/${chatId}/read`, {
     method: 'POST',
