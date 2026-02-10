@@ -55,6 +55,30 @@ export default function App() {
     }
   }, [location.pathname])
 
+  useEffect(() => {
+    const root = document.documentElement
+    const vv = window.visualViewport
+
+    const updateViewportVars = () => {
+      const viewportHeight = vv ? vv.height + vv.offsetTop : window.innerHeight
+      const keyboardOffset = Math.max(0, window.innerHeight - viewportHeight)
+      root.style.setProperty('--app-vh', `${Math.round(viewportHeight)}px`)
+      root.style.setProperty('--kb-offset', `${Math.round(keyboardOffset)}px`)
+    }
+
+    updateViewportVars()
+    vv?.addEventListener('resize', updateViewportVars)
+    vv?.addEventListener('scroll', updateViewportVars)
+    window.addEventListener('orientationchange', updateViewportVars)
+    window.addEventListener('resize', updateViewportVars)
+    return () => {
+      vv?.removeEventListener('resize', updateViewportVars)
+      vv?.removeEventListener('scroll', updateViewportVars)
+      window.removeEventListener('orientationchange', updateViewportVars)
+      window.removeEventListener('resize', updateViewportVars)
+    }
+  }, [])
+
   const isMobileRoute =
     location.pathname === '/' ||
     location.pathname.startsWith('/login') ||
