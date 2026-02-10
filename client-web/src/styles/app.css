@@ -956,11 +956,11 @@ body::before {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: var(--vv-top, 0px);
+  bottom: 0;
   z-index: 12;
   padding-bottom: 0;
   margin-top: auto;
-  transform: translateY(calc(-1 * max(var(--kb-offset, 0px), var(--vv-top, 0px))));
+  transform: translateY(calc(-1 * var(--kb-offset, 0px)));
 }
 
 .composer-bottom input {
