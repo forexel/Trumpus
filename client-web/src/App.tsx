@@ -1,6 +1,6 @@
 import { Routes, Route, Link, Navigate, useLocation } from 'react-router-dom'
 import { useEffect, useState } from 'react'
-import { getAccessToken, getLastChatId, getSession } from './lib/api'
+import { getLastChatId, getSession } from './lib/api'
 import LoginPage from './pages/LoginPage'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import ChatsPage from './pages/ChatsPage'
@@ -14,23 +14,17 @@ export default function App() {
   const location = useLocation()
   const [sessionReady, setSessionReady] = useState(false)
   const [authed, setAuthed] = useState(false)
-  const hasLocalToken = Boolean(getAccessToken())
   const homeRedirect = getLastChatId() ? `/chats/${getLastChatId()}` : '/chats'
 
   useEffect(() => {
     let active = true
     setSessionReady(false)
-    if (!hasLocalToken) {
-      setAuthed(false)
-      setSessionReady(true)
-      return () => {
-        active = false
-      }
-    }
-
     getSession()
       .then((data) => {
         if (active) setAuthed(Boolean(data?.client_id))
+      })
+      .catch(() => {
+        if (active) setAuthed(false)
       })
       .finally(() => {
         if (active) setSessionReady(true)
@@ -39,7 +33,7 @@ export default function App() {
     return () => {
       active = false
     }
-  }, [location.pathname, hasLocalToken])
+  }, [location.pathname])
   const isMobileRoute =
     location.pathname === '/' ||
     location.pathname.startsWith('/login') ||

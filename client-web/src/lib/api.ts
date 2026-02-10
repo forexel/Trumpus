@@ -178,7 +178,7 @@ export async function getSession() {
     }
   }
   if (!res.ok) {
-    await hardLogout()
+    clearClientSession()
     return null
   }
   const data = (await res.json()) as { client_id: string; email: string }
