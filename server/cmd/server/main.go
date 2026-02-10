@@ -1950,6 +1950,41 @@ func handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, jsonMap{"ok": true})
 }
 
+func handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	registrationsTotal, err := store.countClients()
+	if err != nil {
+		http.Error(w, "failed to fetch registrations metric", http.StatusInternalServerError)
+		return
+	}
+	chatsTotal, err := store.countChats()
+	if err != nil {
+		http.Error(w, "failed to fetch chats metric", http.StatusInternalServerError)
+		return
+	}
+	messagesTotal, err := store.countMessages()
+	if err != nil {
+		http.Error(w, "failed to fetch messages metric", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	fmt.Fprintf(w, "# HELP trumpus_registrations_total Total number of client registrations.\n")
+	fmt.Fprintf(w, "# TYPE trumpus_registrations_total counter\n")
+	fmt.Fprintf(w, "trumpus_registrations_total %d\n", registrationsTotal)
+	fmt.Fprintf(w, "# HELP trumpus_chats_created_total Total number of chats created.\n")
+	fmt.Fprintf(w, "# TYPE trumpus_chats_created_total counter\n")
+	fmt.Fprintf(w, "trumpus_chats_created_total %d\n", chatsTotal)
+	fmt.Fprintf(w, "# HELP trumpus_messages_sent_total Total number of messages sent.\n")
+	fmt.Fprintf(w, "# TYPE trumpus_messages_sent_total counter\n")
+	fmt.Fprintf(w, "trumpus_messages_sent_total %d\n", messagesTotal)
+}
+
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -1991,6 +2026,7 @@ func main() {
 	mux.HandleFunc("/health", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, jsonMap{"ok": true})
 	}))
+	mux.HandleFunc("/metrics", handleMetrics)
 
 	// Auth stubs
 	mux.HandleFunc("/api/v1/auth/login", wrap(handleClientLogin))
