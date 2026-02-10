@@ -15,8 +15,33 @@ export default function App() {
   const [sessionReady, setSessionReady] = useState(false)
   const [authed, setAuthed] = useState(false)
   const [viewportDebug, setViewportDebug] = useState<string[]>([])
+  const [debugViewport, setDebugViewport] = useState(false)
   const homeRedirect = getLastChatId() ? `/chats/${getLastChatId()}` : '/chats'
-  const debugViewport = new URLSearchParams(location.search).get('debugViewport') === '1'
+
+  useEffect(() => {
+    const fromQuery = new URLSearchParams(location.search).get('debugViewport') === '1'
+    let fromStorage = false
+    try {
+      fromStorage = window.localStorage.getItem('debugViewport') === '1'
+    } catch {
+      fromStorage = false
+    }
+    setDebugViewport(fromQuery || fromStorage)
+  }, [location.search])
+
+  const toggleDebugViewport = () => {
+    const next = !debugViewport
+    setDebugViewport(next)
+    try {
+      if (next) {
+        window.localStorage.setItem('debugViewport', '1')
+      } else {
+        window.localStorage.removeItem('debugViewport')
+      }
+    } catch {
+      // noop
+    }
+  }
 
   useEffect(() => {
     let active = true
@@ -237,6 +262,29 @@ export default function App() {
         >
           {viewportDebug.join('\n')}
         </pre>
+      ) : null}
+      {isMobileRoute ? (
+        <button
+          type="button"
+          onClick={toggleDebugViewport}
+          style={{
+            position: 'fixed',
+            right: 8,
+            bottom: 8,
+            zIndex: 9999,
+            height: 28,
+            minWidth: 44,
+            borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.35)',
+            background: debugViewport ? 'rgba(0,120,255,0.9)' : 'rgba(0,0,0,0.7)',
+            color: '#fff',
+            fontSize: 12,
+            fontWeight: 700,
+            padding: '0 10px'
+          }}
+        >
+          DBG
+        </button>
       ) : null}
     </div>
   )
