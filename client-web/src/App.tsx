@@ -59,23 +59,41 @@ export default function App() {
     const root = document.documentElement
     const vv = window.visualViewport
 
-    const updateViewportVars = () => {
-      const viewportHeight = vv ? vv.height + vv.offsetTop : window.innerHeight
-      const keyboardOffset = Math.max(0, window.innerHeight - viewportHeight)
-      root.style.setProperty('--app-vh', `${Math.round(viewportHeight)}px`)
+    const updateAppHeight = () => {
+      root.style.setProperty('--app-vh', `${Math.round(window.innerHeight)}px`)
+    }
+
+    const updateKeyboardOffset = () => {
+      if (!vv) {
+        root.style.setProperty('--kb-offset', '0px')
+        return
+      }
+      const active = document.activeElement as HTMLElement | null
+      const editing =
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        Boolean(active?.isContentEditable)
+      if (!editing) {
+        root.style.setProperty('--kb-offset', '0px')
+        return
+      }
+      const viewportBottom = vv.height + vv.offsetTop
+      const rawInset = Math.max(0, window.innerHeight - viewportBottom)
+      const keyboardOffset = rawInset > 80 ? rawInset : 0
       root.style.setProperty('--kb-offset', `${Math.round(keyboardOffset)}px`)
     }
 
-    updateViewportVars()
-    vv?.addEventListener('resize', updateViewportVars)
-    vv?.addEventListener('scroll', updateViewportVars)
-    window.addEventListener('orientationchange', updateViewportVars)
-    window.addEventListener('resize', updateViewportVars)
+    updateAppHeight()
+    updateKeyboardOffset()
+    vv?.addEventListener('resize', updateKeyboardOffset)
+    vv?.addEventListener('scroll', updateKeyboardOffset)
+    window.addEventListener('orientationchange', updateAppHeight)
+    window.addEventListener('resize', updateAppHeight)
     return () => {
-      vv?.removeEventListener('resize', updateViewportVars)
-      vv?.removeEventListener('scroll', updateViewportVars)
-      window.removeEventListener('orientationchange', updateViewportVars)
-      window.removeEventListener('resize', updateViewportVars)
+      vv?.removeEventListener('resize', updateKeyboardOffset)
+      vv?.removeEventListener('scroll', updateKeyboardOffset)
+      window.removeEventListener('orientationchange', updateAppHeight)
+      window.removeEventListener('resize', updateAppHeight)
     }
   }, [])
 

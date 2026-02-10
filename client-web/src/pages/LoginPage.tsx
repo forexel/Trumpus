@@ -90,8 +90,8 @@ export default function LoginPage() {
             </div>
           </form>
           <div className="auth-links">
-            <Link to="/forgot">Forgot password?</Link>
             <Link to="/register">Create account</Link>
+            <Link to="/forgot">Forgot password?</Link>
           </div>
           <div className="store-buttons">
             <div className="store-button">

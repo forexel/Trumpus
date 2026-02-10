@@ -454,7 +454,7 @@ html, body {
   }
   
   .auth-links {
-    justify-content: center;
+    justify-content: space-between;
     gap: 12px;
     flex-wrap: nowrap;
   }
