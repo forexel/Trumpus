@@ -59,16 +59,21 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
     ws.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data)
-        if (payload?.type !== 'message_created') return
         if (payload?.chat_id !== chatId) return
         const incoming = payload?.message as Message | undefined
         if (!incoming) return
-        setMessages((prev) => {
-          if (prev.some((m) => m.id === incoming.id)) return prev
-          return [...prev, incoming]
-        })
-        if (incoming.sender === 'client') {
-          markChatRead(chatId)
+        if (payload?.type === 'message_created') {
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === incoming.id)) return prev
+            return [...prev, incoming]
+          })
+          if (incoming.sender === 'client') {
+            markChatRead(chatId)
+          }
+          return
+        }
+        if (payload?.type === 'message_updated') {
+          setMessages((prev) => prev.map((m) => (m.id === incoming.id ? incoming : m)))
         }
       } catch {
         // ignore malformed events

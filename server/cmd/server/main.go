@@ -120,6 +120,7 @@ type LLMJob struct {
 	Content   string `json:"content"`
 	RequestID string `json:"request_id"`
 	Source    string `json:"source,omitempty"`
+	ReplaceID string `json:"replace_message_id,omitempty"`
 	Attempts  int    `json:"attempts"`
 }
 
@@ -651,6 +652,19 @@ func (s *Store) insertMessage(chatID, sender, content string, createdAt time.Tim
 		return nil, err
 	}
 	return msg, nil
+}
+
+func (s *Store) updateMessageContent(messageID, content string) (*Message, error) {
+	var m Message
+	err := s.db.QueryRow(`UPDATE messages SET content=$1 WHERE id=$2 RETURNING id, chat_id, sender, content, created_at`, content, messageID).
+		Scan(&m.ID, &m.ChatID, &m.Sender, &m.Content, &m.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &m, nil
 }
 
 func (s *Store) updateChatTitle(chatID, title string) error {
@@ -1591,6 +1605,24 @@ func processLLMJob(job LLMJob) error {
 			return nil
 		}
 	}
+
+	if job.ReplaceID != "" {
+		updated, err := store.updateMessageContent(job.ReplaceID, resp)
+		if err != nil {
+			return err
+		}
+		if updated != nil {
+			publishEvent(ChatEvent{
+				Type:           "message_updated",
+				ChatID:         job.ChatID,
+				ClientID:       chat.ClientID,
+				Message:        updated,
+				UnreadForAdmin: chat.UnreadForAdmin,
+			})
+			return nil
+		}
+	}
+
 	reply, err := store.insertMessage(job.ChatID, "admin", resp, time.Now())
 	if err != nil {
 		return err
@@ -2915,6 +2947,24 @@ func handleAdminResendMessage(w http.ResponseWriter, r *http.Request, chatID, me
 		Content:   msg.Content,
 		RequestID: nextID("admin_resend"),
 		Source:    "admin_resend",
+	}
+	messages, err := store.listMessages(chatID)
+	if err == nil && len(messages) > 0 {
+		clientIndex := -1
+		for i, item := range messages {
+			if item.ID == messageID {
+				clientIndex = i
+				break
+			}
+		}
+		if clientIndex >= 0 {
+			for i := clientIndex + 1; i < len(messages); i++ {
+				if messages[i].Sender == "admin" {
+					job.ReplaceID = messages[i].ID
+					break
+				}
+			}
+		}
 	}
 	if err := enqueueLLMJob(job); err != nil {
 		go func(j LLMJob) {
