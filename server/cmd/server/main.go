@@ -119,6 +119,7 @@ type LLMJob struct {
 	Persona   string `json:"persona"`
 	Content   string `json:"content"`
 	RequestID string `json:"request_id"`
+	Source    string `json:"source,omitempty"`
 	Attempts  int    `json:"attempts"`
 }
 
@@ -1559,19 +1560,34 @@ func processLLMJob(job LLMJob) error {
 	if chat == nil {
 		return fmt.Errorf("chat not found")
 	}
-	llmBase := os.Getenv("LLM_BASE")
-	resp, status, body, err := callLLM(llmBase, job.ChatID, job.Persona, job.Content)
-	if err != nil || strings.TrimSpace(resp) == "" {
-		log.Printf("llm_error req_id=%s chat_id=%s status=%d err=%v body=%s", job.RequestID, job.ChatID, status, err, body)
-		time.Sleep(2 * time.Second)
-		resp, status, body, err = callLLM(llmBase, job.ChatID, job.Persona, job.Content)
+
+	callOnce := func() (string, int, string, error) {
+		llmBase := os.Getenv("LLM_BASE")
+		resp, status, body, err := callLLM(llmBase, job.ChatID, job.Persona, job.Content)
+		if err != nil || strings.TrimSpace(resp) == "" {
+			log.Printf("llm_error req_id=%s chat_id=%s status=%d err=%v body=%s", job.RequestID, job.ChatID, status, err, body)
+			time.Sleep(2 * time.Second)
+			resp, status, body, err = callLLM(llmBase, job.ChatID, job.Persona, job.Content)
+		}
+		if err != nil || strings.TrimSpace(resp) == "" {
+			log.Printf("llm_error_final req_id=%s chat_id=%s status=%d err=%v body=%s", job.RequestID, job.ChatID, status, err, body)
+			resp = "LLM is busy, try later."
+		}
+		return resp, status, body, err
 	}
-	if err != nil || strings.TrimSpace(resp) == "" {
-		log.Printf("llm_error_final req_id=%s chat_id=%s status=%d err=%v body=%s", job.RequestID, job.ChatID, status, err, body)
-		resp = "LLM is busy, try later."
+
+	resp, _, _, _ := callOnce()
+	// Admin resend should make a real retry cycle, not silently keep the previous busy result.
+	if job.Source == "admin_resend" && strings.TrimSpace(resp) == "LLM is busy, try later." {
+		for i := 0; i < 2 && strings.TrimSpace(resp) == "LLM is busy, try later."; i++ {
+			time.Sleep(2 * time.Second)
+			resp, _, _, _ = callOnce()
+		}
 	}
+
 	if last, err := store.getLastAdminMessage(job.ChatID); err == nil && last != nil {
-		if last.Content == resp {
+		// Keep dedup for normal chat flow, but allow explicit admin resend to create a new retry result.
+		if job.Source != "admin_resend" && last.Content == resp {
 			return nil
 		}
 	}
@@ -2898,6 +2914,7 @@ func handleAdminResendMessage(w http.ResponseWriter, r *http.Request, chatID, me
 		Persona:   chat.Persona,
 		Content:   msg.Content,
 		RequestID: nextID("admin_resend"),
+		Source:    "admin_resend",
 	}
 	if err := enqueueLLMJob(job); err != nil {
 		go func(j LLMJob) {
@@ -3220,6 +3237,7 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 		Persona:   persona,
 		Content:   content,
 		RequestID: reqID,
+		Source:    "client_send",
 		Attempts:  0,
 	}
 	if err := enqueueLLMJob(job); err != nil {
