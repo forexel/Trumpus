@@ -1,34 +1,21 @@
 {
-  email admin@trumpus.tech
-}
-
-(block_secrets) {
-  @forbidden path /.env* /.git/* /.vscode/* /docker-compose* /Caddyfile
-  respond @forbidden 403
-}
-
-(common_headers) {
-  header {
-    Strict-Transport-Security "max-age=31536000; includeSubDomains"
-  }
+	email admin@trumpus.tech
 }
 
 trumpus.tech {
-  import block_secrets
-  import common_headers
-
   route {
-    handle /api/v1/ws* {
+    @google path /auth/google/*
+    handle @google {
+      uri replace /auth/google /api/v1/auth/google
       reverse_proxy trumpus_api:8000
-        header_up X-Forwarded-Proto {scheme}
-        header_up X-Forwarded-Host {host}
-        header_up X-Forwarded-For {remote}
     }
+    handle /api/v1/health {
+      rewrite * /health
+      reverse_proxy trumpus_api:8000
+    }
+
     handle /api/* {
       reverse_proxy trumpus_api:8000
-        header_up X-Forwarded-Proto {scheme}
-        header_up X-Forwarded-Host {host}
-        header_up X-Forwarded-For {remote}
     }
 
     handle {
@@ -38,21 +25,20 @@ trumpus.tech {
 }
 
 admin.trumpus.tech {
-  import block_secrets
-  import common_headers
-
   route {
-    handle /api/v1/ws* {
+    @google path /auth/google/*
+    handle @google {
+      uri replace /auth/google /api/v1/auth/google
       reverse_proxy trumpus_api:8000
-        header_up X-Forwarded-Proto {scheme}
-        header_up X-Forwarded-Host {host}
-        header_up X-Forwarded-For {remote}
     }
+
+    handle /api/v1/health {
+      rewrite * /health
+      reverse_proxy trumpus_api:8000
+    }
+
     handle /api/* {
       reverse_proxy trumpus_api:8000
-        header_up X-Forwarded-Proto {scheme}
-        header_up X-Forwarded-Host {host}
-        header_up X-Forwarded-For {remote}
     }
 
     handle {
@@ -62,11 +48,14 @@ admin.trumpus.tech {
 }
 
 api.trumpus.tech {
-  import block_secrets
-  import common_headers
+  route {
+    handle /api/v1/health {
+      rewrite * /health
+      reverse_proxy trumpus_api:8000
+    }
 
-  reverse_proxy trumpus_api:8000
-    header_up X-Forwarded-Proto {scheme}
-    header_up X-Forwarded-Host {host}
-    header_up X-Forwarded-For {remote}
+    handle {
+      reverse_proxy trumpus_api:8000
+    }
+  }
 }
