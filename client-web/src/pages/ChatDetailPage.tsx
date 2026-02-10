@@ -116,13 +116,6 @@ export default function ChatDetailPage() {
     pollForAI(chatId, messages.length)
   }, [loading, chat, messages.length, wsConnected]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Focus input on mount
-  useEffect(() => {
-    if (!loading) {
-      inputRef.current?.focus()
-    }
-  }, [loading])
-
   useEffect(() => {
     if (!chatId) return
     const ws = new WebSocket(`${getWsBase()}/ws?chat_id=${encodeURIComponent(chatId)}`)
