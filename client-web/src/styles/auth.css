@@ -20,7 +20,8 @@ html, body {
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .auth-overlay {
@@ -52,14 +53,14 @@ html, body {
 .auth-content {
   position: relative;
   z-index: 10;
-  width: min(380px, 100%);
+  width: min(380px, calc(100% - 8px));
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 16px;
   margin-top: -104px;
   max-height: 100%;
-  overflow-y: auto;
+  overflow-y: visible;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -282,9 +283,9 @@ html, body {
 .auth-links {
   margin-top: 14px;
   display: flex;
-  justify-content: center;
+  justify-content: space-between;
   align-items: center;
-  gap: 18px;
+  gap: 8px;
   flex-wrap: nowrap;
   padding-top: 12px;
   border-top: 2px solid #002868;
