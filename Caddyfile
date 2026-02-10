@@ -4,11 +4,6 @@
 
 trumpus.tech {
   route {
-    @google path /auth/google/*
-    handle @google {
-      uri replace /auth/google /api/v1/auth/google
-      reverse_proxy trumpus_api:8000
-    }
     handle /api/v1/health {
       rewrite * /health
       reverse_proxy trumpus_api:8000
@@ -26,12 +21,6 @@ trumpus.tech {
 
 admin.trumpus.tech {
   route {
-    @google path /auth/google/*
-    handle @google {
-      uri replace /auth/google /api/v1/auth/google
-      reverse_proxy trumpus_api:8000
-    }
-
     handle /api/v1/health {
       rewrite * /health
       reverse_proxy trumpus_api:8000
