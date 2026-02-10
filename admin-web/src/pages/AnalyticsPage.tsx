@@ -57,29 +57,17 @@ export default function AnalyticsPage() {
       <h1>Analytics</h1>
       <p className="muted">All date metrics are calculated in UTC day boundaries.</p>
 
-      <div className="analytics-filters">
-        <label>
-          Day
-          <input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
-        </label>
-        <label>
-          From
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </label>
-        <label>
-          To
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </label>
-      </div>
-
       {loading ? <div className="card">Loading analytics...</div> : null}
       {!loading && error ? <div className="card error">{error}</div> : null}
 
       {!loading && !error && data ? (
         <div className="analytics-sections">
           <section>
-            <h2>Selected Day ({data.day})</h2>
-            <div className="analytics-grid">
+            <div className="section-head">
+              <h2>Day</h2>
+              <input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
+            </div>
+            <div className="analytics-grid four-cols">
               <div className="stat-card"><div className="stat-label">New registrations</div><div className="stat-value">{formatNum(data.day_metrics.new_registrations)}</div></div>
               <div className="stat-card"><div className="stat-label">DAU (wrote message)</div><div className="stat-value">{formatNum(data.day_metrics.dau)}</div></div>
               <div className="stat-card"><div className="stat-label">New chats</div><div className="stat-value">{formatNum(data.day_metrics.new_chats)}</div></div>
@@ -89,7 +77,7 @@ export default function AnalyticsPage() {
 
           <section>
             <h2>Totals</h2>
-            <div className="analytics-grid">
+            <div className="analytics-grid three-cols">
               <div className="stat-card"><div className="stat-label">Registered total</div><div className="stat-value">{formatNum(data.totals.registrations)}</div></div>
               <div className="stat-card"><div className="stat-label">Chats total</div><div className="stat-value">{formatNum(data.totals.chats)}</div></div>
               <div className="stat-card"><div className="stat-label">Messages total</div><div className="stat-value">{formatNum(data.totals.messages)}</div></div>
@@ -97,8 +85,14 @@ export default function AnalyticsPage() {
           </section>
 
           <section>
-            <h2>Selected Period ({data.period.from} to {data.period.to})</h2>
-            <div className="analytics-grid">
+            <div className="section-head period-head">
+              <h2>Period</h2>
+              <span className="period-label">from</span>
+              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              <span className="period-label">to</span>
+              <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            </div>
+            <div className="analytics-grid four-cols">
               <div className="stat-card"><div className="stat-label">New registrations</div><div className="stat-value">{formatNum(data.period_metrics.new_registrations)}</div></div>
               <div className="stat-card"><div className="stat-label">Active users (wrote message)</div><div className="stat-value">{formatNum(data.period_metrics.dau)}</div></div>
               <div className="stat-card"><div className="stat-label">New chats</div><div className="stat-value">{formatNum(data.period_metrics.new_chats)}</div></div>
@@ -108,7 +102,7 @@ export default function AnalyticsPage() {
 
           <section>
             <h2>Today vs Yesterday</h2>
-            <div className="analytics-grid">
+            <div className="analytics-grid three-cols">
               <div className="stat-card">
                 <div className="stat-label">New registrations</div>
                 <div className="stat-value">{formatNum(data.today.new_registrations.value)}</div>
