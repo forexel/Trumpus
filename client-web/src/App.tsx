@@ -14,7 +14,9 @@ export default function App() {
   const location = useLocation()
   const [sessionReady, setSessionReady] = useState(false)
   const [authed, setAuthed] = useState(false)
+  const [viewportDebug, setViewportDebug] = useState<string[]>([])
   const homeRedirect = getLastChatId() ? `/chats/${getLastChatId()}` : '/chats'
+  const debugViewport = new URLSearchParams(location.search).get('debugViewport') === '1'
 
   useEffect(() => {
     let active = true
@@ -106,6 +108,69 @@ export default function App() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!debugViewport) {
+      setViewportDebug([])
+      return
+    }
+
+    const updateDebug = () => {
+      const rootStyle = getComputedStyle(document.documentElement)
+      const appVh = rootStyle.getPropertyValue('--app-vh').trim()
+      const kbOffset = rootStyle.getPropertyValue('--kb-offset').trim()
+      const vv = window.visualViewport
+      const header = document.querySelector('.mobile-header') as HTMLElement | null
+      const messages = document.querySelector('.chat-messages') as HTMLElement | null
+      const composer = document.querySelector('.composer-bottom') as HTMLElement | null
+      const active = document.activeElement
+
+      const headerRect = header?.getBoundingClientRect()
+      const messagesRect = messages?.getBoundingClientRect()
+      const composerRect = composer?.getBoundingClientRect()
+
+      const bottomGap = composerRect ? Math.round(window.innerHeight - composerRect.bottom) : null
+      const middleGap = composerRect && messagesRect ? Math.round(composerRect.top - messagesRect.bottom) : null
+
+      setViewportDebug([
+        `path: ${location.pathname}`,
+        `innerHeight: ${Math.round(window.innerHeight)}`,
+        `app-vh: ${appVh || '-'}`,
+        `kb-offset: ${kbOffset || '-'}`,
+        `vv.h: ${vv ? Math.round(vv.height) : '-'}`,
+        `vv.top: ${vv ? Math.round(vv.offsetTop) : '-'}`,
+        `header.top: ${headerRect ? Math.round(headerRect.top) : '-'}`,
+        `header.h: ${headerRect ? Math.round(headerRect.height) : '-'}`,
+        `messages.top: ${messagesRect ? Math.round(messagesRect.top) : '-'}`,
+        `messages.bottom: ${messagesRect ? Math.round(messagesRect.bottom) : '-'}`,
+        `composer.top: ${composerRect ? Math.round(composerRect.top) : '-'}`,
+        `composer.bottom: ${composerRect ? Math.round(composerRect.bottom) : '-'}`,
+        `gap bottom: ${bottomGap ?? '-'}`,
+        `gap middle: ${middleGap ?? '-'}`,
+        `focus: ${active ? (active as HTMLElement).tagName.toLowerCase() : '-'}`
+      ])
+    }
+
+    updateDebug()
+    const vv = window.visualViewport
+    const timer = window.setInterval(updateDebug, 250)
+    vv?.addEventListener('resize', updateDebug)
+    vv?.addEventListener('scroll', updateDebug)
+    window.addEventListener('resize', updateDebug)
+    window.addEventListener('scroll', updateDebug)
+    document.addEventListener('focusin', updateDebug)
+    document.addEventListener('focusout', updateDebug)
+
+    return () => {
+      window.clearInterval(timer)
+      vv?.removeEventListener('resize', updateDebug)
+      vv?.removeEventListener('scroll', updateDebug)
+      window.removeEventListener('resize', updateDebug)
+      window.removeEventListener('scroll', updateDebug)
+      document.removeEventListener('focusin', updateDebug)
+      document.removeEventListener('focusout', updateDebug)
+    }
+  }, [debugViewport, location.pathname])
+
   const isMobileRoute =
     location.pathname === '/' ||
     location.pathname.startsWith('/login') ||
@@ -150,6 +215,29 @@ export default function App() {
           <Route path="/chats/:id" element={authed ? <ChatDetailPage /> : <Navigate to="/login" replace />} />
         </Routes>
       </main>
+      {debugViewport ? (
+        <pre
+          style={{
+            position: 'fixed',
+            right: 8,
+            top: 8,
+            zIndex: 9999,
+            margin: 0,
+            padding: '8px 10px',
+            maxWidth: '70vw',
+            fontSize: 11,
+            lineHeight: 1.3,
+            color: '#9ef',
+            background: 'rgba(0,0,0,0.78)',
+            border: '1px solid rgba(255,255,255,0.2)',
+            borderRadius: 8,
+            pointerEvents: 'none',
+            whiteSpace: 'pre-wrap'
+          }}
+        >
+          {viewportDebug.join('\n')}
+        </pre>
+      ) : null}
     </div>
   )
 }
