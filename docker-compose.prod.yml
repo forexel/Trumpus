@@ -1,11 +1,21 @@
 services:
+  redis:
+    image: redis:7.2-alpine
+    container_name: trumpus_redis
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - trumpus_redisdata:/data
+    networks:
+      - apps
+    restart: unless-stopped
+
   db:
     image: postgres:16
     container_name: trumpus_db
     environment:
-      POSTGRES_USER: trumpus
-      POSTGRES_PASSWORD: trumpus
-      POSTGRES_DB: trumpus
+      POSTGRES_USER: ${POSTGRES_USER:-trumpus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trumpus}
+      POSTGRES_DB: ${POSTGRES_DB:-trumpus}
     volumes:
       - trumpus_pgdata:/var/lib/postgresql/data
     networks:
@@ -17,8 +27,12 @@ services:
       context: ./server
       dockerfile: Dockerfile
     container_name: trumpus_api
+    env_file:
+      - .env
+    extra_hosts:
+      - "mail.trumpus.tech:host-gateway"
     environment:
-      DATABASE_URL: postgresql://trumpus:trumpus@db:5432/trumpus?sslmode=disable
+      DATABASE_URL: postgresql://${POSTGRES_USER:-trumpus}:${POSTGRES_PASSWORD:-trumpus}@db:5432/${POSTGRES_DB:-trumpus}?sslmode=disable
       PORT: 8000
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
 
@@ -26,16 +40,36 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
 
+      COOKIE_DOMAIN: ".trumpus.tech"
       COOKIE_SECURE: "true"
       TRUST_PROXY: "true"
 
-      # прод:
       CORS_ORIGINS: https://trumpus.tech,https://admin.trumpus.tech
-      OAUTH_REDIRECT_ALLOWLIST: https://trumpus.tech
+      OAUTH_REDIRECT_ALLOWLIST: https://trumpus.tech,https://admin.trumpus.tech
+
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_OAUTH_CALLBACK_URL: ${GOOGLE_OAUTH_CALLBACK_URL:-https://trumpus.tech/api/v1/auth/google/callback}
 
       LLM_BASE: http://llm:8010
+      LLM_QUEUE_STREAM: llm_jobs
+      LLM_QUEUE_GROUP: llm_workers
+      CHAT_EVENT_CHANNEL: chat_events
+
+      # SMTP (password reset emails)
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_TLS: ${SMTP_TLS:-starttls}
+      RESET_LINK_BASE: ${RESET_LINK_BASE:-https://trumpus.tech/reset-password}
+      MAIL_TEMPLATES_DIR: /app/templates/mail
+    volumes:
+      - ./templates:/app/templates:ro
     depends_on:
       - db
+      - redis
     networks:
       - apps
       - web
@@ -47,13 +81,17 @@ services:
       dockerfile: Dockerfile
     container_name: trumpus_worker
     environment:
-      DATABASE_URL: postgresql://trumpus:trumpus@db:5432/trumpus?sslmode=disable
+      DATABASE_URL: postgresql://${POSTGRES_USER:-trumpus}:${POSTGRES_PASSWORD:-trumpus}@db:5432/${POSTGRES_DB:-trumpus}?sslmode=disable
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       LLM_BASE: http://llm:8010
       RUN_MODE: worker
       JWT_SECRET: ${JWT_SECRET}
+      LLM_QUEUE_STREAM: llm_jobs
+      LLM_QUEUE_GROUP: llm_workers
+      CHAT_EVENT_CHANNEL: chat_events
     depends_on:
       - db
+      - redis
       - llm
     networks:
       - apps
@@ -64,17 +102,18 @@ services:
       context: ./llm
       dockerfile: Dockerfile
     container_name: trumpus_llm
+    env_file:
+      - .env.llm
     environment:
-      API_BASE: http://api:8000/api/v1
       PORT: 8010
-      LLM_PROVIDER: openrouter
+      LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-      OPENROUTER_MODEL_PRIMARY: ${OPENROUTER_MODEL_PRIMARY}
-      OPENROUTER_MODEL_FALLBACK: ${OPENROUTER_MODEL_FALLBACK}
-      OPENROUTER_MODEL_FALLBACK_2: ${OPENROUTER_MODEL_FALLBACK_2}
-      OPENROUTER_MODEL_FALLBACK_3: ${OPENROUTER_MODEL_FALLBACK_3}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_MODEL: ${OPENAI_MODEL}
+      OPENROUTER_MODEL_PRIMARY: ${OPENROUTER_MODEL_PRIMARY:-openai/gpt-oss-120b:free}
+      OPENROUTER_MODEL_FALLBACK: ${OPENROUTER_MODEL_FALLBACK:-Qwen/Qwen3-4B:free}
+      OPENROUTER_MODEL_FALLBACK_2: ${OPENROUTER_MODEL_FALLBACK_2:-meta-llama/llama-3.2-3b-instruct:free}
+      OPENROUTER_MODEL_FALLBACK_3: ${OPENROUTER_MODEL_FALLBACK_3:-openai/gpt-4o-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
     depends_on:
       - api
     networks:
@@ -85,9 +124,9 @@ services:
     build:
       context: ./client-web
       dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: /api/v1
     container_name: trumpus_client_web
-    environment:
-      VITE_API_BASE: https://api.trumpus.tech/api/v1
     depends_on:
       - api
     networks:
@@ -98,9 +137,9 @@ services:
     build:
       context: ./admin-web
       dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: /api/v1
     container_name: trumpus_admin_web
-    environment:
-      VITE_API_BASE: https://api.trumpus.tech/api/v1
     depends_on:
       - api
     networks:
@@ -112,14 +151,15 @@ services:
     container_name: trumpus_caddy
     restart: unless-stopped
     ports:
-      - 80:80
-      - 443:443
+      - "80:80"
+      - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     networks:
       - web
+      - apps
     depends_on:
       - client-web
       - admin-web
@@ -127,11 +167,10 @@ services:
 
 volumes:
   trumpus_pgdata:
+  trumpus_redisdata:
   caddy_data:
   caddy_config:
 
 networks:
   web:
-    external: true
   apps:
-    external: true

@@ -25,6 +25,8 @@ services:
     container_name: trumpus_api
     env_file:
       - .env
+    extra_hosts:
+      - "mail.trumpus.tech:host-gateway"
 
     environment:
       DATABASE_URL: postgresql://trumpus:trumpus@db:5432/trumpus?sslmode=disable
@@ -38,17 +40,23 @@ services:
       TRUST_PROXY: "true"
       CORS_ORIGINS: "https://trumpus.tech,https://admin.trumpus.tech"
       OAUTH_REDIRECT_ALLOWLIST: "https://trumpus.tech,https://admin.trumpus.tech"
-      GOOGLE_CLIENT_ID: 813736117005-jm3t8ousstjbra6tcbe2hpi6khoeqhor.apps.googleusercontent.com
-      GOOGLE_CLIENT_SECRET: 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
-      GOOGLE_OAUTH_CALLBACK_URL: "https://trumpus.tech/api/v1/auth/google/callback"
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_CALLBACK_URL: ${GOOGLE_OAUTH_CALLBACK_URL:-https://trumpus.tech/api/v1/auth/google/callback}
       LLM_BASE: "http://llm:8010"
-      APP_URL: ""
-      PUBLIC_URL: ""
-      FRONTEND_URL: ""
-      CLIENT_URL: ""
       LLM_QUEUE_STREAM: llm_jobs
       LLM_QUEUE_GROUP: llm_workers
       CHAT_EVENT_CHANNEL: chat_events
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_TLS: ${SMTP_TLS:-starttls}
+      RESET_LINK_BASE: ${RESET_LINK_BASE:-https://trumpus.tech/reset-password}
+      MAIL_TEMPLATES_DIR: /app/templates/mail
+    volumes:
+      - ./templates:/app/templates:ro
     ports:
       - "8000:8000"
     depends_on:
@@ -107,9 +115,9 @@ services:
     env_file:
       - .env.llm
     environment:
-      API_BASE: http://api:8000/api/v1
       PORT: 8010
-      LLM_PROVIDER: openrouter
+      LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       OPENROUTER_MODEL: "openai/gpt-oss-120b:free"
