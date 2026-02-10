@@ -18,8 +18,17 @@ trumpus.tech {
   import common_headers
 
   route {
+    handle /api/v1/ws* {
+      reverse_proxy trumpus_api:8000
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+        header_up X-Forwarded-For {remote}
+    }
     handle /api/* {
       reverse_proxy trumpus_api:8000
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+        header_up X-Forwarded-For {remote}
     }
 
     handle {
@@ -33,8 +42,17 @@ admin.trumpus.tech {
   import common_headers
 
   route {
+    handle /api/v1/ws* {
+      reverse_proxy trumpus_api:8000
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+        header_up X-Forwarded-For {remote}
+    }
     handle /api/* {
       reverse_proxy trumpus_api:8000
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+        header_up X-Forwarded-For {remote}
     }
 
     handle {
@@ -48,4 +66,7 @@ api.trumpus.tech {
   import common_headers
 
   reverse_proxy trumpus_api:8000
+    header_up X-Forwarded-Proto {scheme}
+    header_up X-Forwarded-Host {host}
+    header_up X-Forwarded-For {remote}
 }

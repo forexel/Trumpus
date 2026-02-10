@@ -33,10 +33,11 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-secret}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
-      COOKIE_SECURE: "false"
+      COOKIE_DOMAIN: ".trumpus.tech"
+      COOKIE_SECURE: "true"
+      TRUST_PROXY: "true"
       CORS_ORIGINS: "https://trumpus.tech,https://admin.trumpus.tech"
       OAUTH_REDIRECT_ALLOWLIST: "https://trumpus.tech,https://admin.trumpus.tech"
-      TRUST_PROXY: "false"
       GOOGLE_CLIENT_ID: 813736117005-jm3t8ousstjbra6tcbe2hpi6khoeqhor.apps.googleusercontent.com
       GOOGLE_CLIENT_SECRET: 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
       GOOGLE_OAUTH_CALLBACK_URL: "https://trumpus.tech/api/v1/auth/google/callback"
@@ -45,6 +46,9 @@ services:
       PUBLIC_URL: ""
       FRONTEND_URL: ""
       CLIENT_URL: ""
+      LLM_QUEUE_STREAM: llm_jobs
+      LLM_QUEUE_GROUP: llm_workers
+      CHAT_EVENT_CHANNEL: chat_events
     ports:
       - "8000:8000"
     depends_on:
@@ -55,7 +59,6 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    container_name: trumpus_worker
     env_file:
       - .env
 
@@ -65,6 +68,9 @@ services:
       LLM_BASE: "http://llm:8010"
       RUN_MODE: worker
       JWT_SECRET: ${JWT_SECRET:-dev-secret}
+      LLM_QUEUE_STREAM: llm_jobs
+      LLM_QUEUE_GROUP: llm_workers
+      CHAT_EVENT_CHANNEL: chat_events
     depends_on:
       - db
       - redis
