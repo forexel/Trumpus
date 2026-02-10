@@ -1110,19 +1110,35 @@ func setCookie(w http.ResponseWriter, name, value string, exp time.Time) {
 }
 
 func clearCookieValue(w http.ResponseWriter, name string) {
-	cookie := &http.Cookie{
-		Name:     name,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   cookieSecure(),
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
+	domains := []string{""}
+	if configured := strings.TrimSpace(cookieDomain()); configured != "" {
+		domains = append(domains, configured)
+		if strings.HasPrefix(configured, ".") {
+			domains = append(domains, strings.TrimPrefix(configured, "."))
+		} else {
+			domains = append(domains, "."+configured)
+		}
 	}
-	if domain := cookieDomain(); domain != "" {
-		cookie.Domain = domain
+	seen := make(map[string]struct{}, len(domains))
+	for _, domain := range domains {
+		if _, ok := seen[domain]; ok {
+			continue
+		}
+		seen[domain] = struct{}{}
+		cookie := &http.Cookie{
+			Name:     name,
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   cookieSecure(),
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   -1,
+		}
+		if domain != "" {
+			cookie.Domain = domain
+		}
+		http.SetCookie(w, cookie)
 	}
-	http.SetCookie(w, cookie)
 }
 
 func setAuthCookies(w http.ResponseWriter, access, refresh string, accessExp, refreshExp time.Time) {

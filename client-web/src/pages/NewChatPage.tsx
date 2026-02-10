@@ -244,7 +244,7 @@ export default function NewChatPage() {
         </div>
       </main>
 
-      <div className="composer-bottom">
+      <div className="composer-bottom composer-fixed composer-newchat">
         <div className="composer-wrapper">
           <input
             placeholder="Ask me something"
