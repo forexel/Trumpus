@@ -35,3 +35,6 @@ coverage/
 *.out
 docker-compose.prod.yml
 jwt_secret.txt
+
+# Production monitoring stack
+monitoring/
