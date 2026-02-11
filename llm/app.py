@@ -1,20 +1,28 @@
 import asyncio
+import json
+import math
 import os
 import random
+import re
 import time
+from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openrouter").strip().lower()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+OPENAI_ROUTER_MODEL = os.getenv("OPENAI_ROUTER_MODEL", "gpt-4o").strip()
+OPENAI_GENERATOR_MODEL = os.getenv("OPENAI_GENERATOR_MODEL", OPENAI_MODEL).strip()
 OPENROUTER_MODEL_PRIMARY = os.getenv("OPENROUTER_MODEL_PRIMARY", os.getenv("OPENROUTER_MODEL", "")).strip()
 OPENROUTER_MODEL_FALLBACK = os.getenv("OPENROUTER_MODEL_FALLBACK", "").strip()
 OPENROUTER_MODEL_FALLBACK_2 = os.getenv("OPENROUTER_MODEL_FALLBACK_2", "").strip()
 OPENROUTER_MODEL_FALLBACK_3 = os.getenv("OPENROUTER_MODEL_FALLBACK_3", "").strip()
+OPENROUTER_ROUTER_MODEL = os.getenv("OPENROUTER_MODEL_ROUTER", OPENROUTER_MODEL_PRIMARY).strip()
+OPENROUTER_GENERATOR_MODEL = os.getenv("OPENROUTER_MODEL_GENERATOR", OPENROUTER_MODEL_PRIMARY).strip()
 
 CONNECT_TIMEOUT = float(os.getenv("OPENROUTER_CONNECT_TIMEOUT", "5"))
 READ_TIMEOUT = float(os.getenv("OPENROUTER_READ_TIMEOUT", "30"))
@@ -24,81 +32,159 @@ POOL_TIMEOUT = float(os.getenv("OPENROUTER_POOL_TIMEOUT", "5"))
 MAX_ATTEMPTS = int(os.getenv("OPENROUTER_MAX_ATTEMPTS", "10"))
 INITIAL_DELAY = float(os.getenv("OPENROUTER_INITIAL_DELAY", "0.5"))
 MAX_DELAY = float(os.getenv("OPENROUTER_MAX_DELAY", "8"))
-MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "700"))
+MAX_TOKENS = min(int(os.getenv("LLM_MAX_TOKENS", "1000")), 1000)
 TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.95"))
 TOP_P = float(os.getenv("LLM_TOP_P", "0.95"))
 PRESENCE_PENALTY = float(os.getenv("LLM_PRESENCE_PENALTY", "0.4"))
 FREQUENCY_PENALTY = float(os.getenv("LLM_FREQUENCY_PENALTY", "0.2"))
 
-STYLE_RULE = (
-    "Stay in-character with vivid, specific, high-energy language. "
-    "Avoid generic or bland replies. If the user message is short, still respond with 2-5 punchy sentences. "
-    "Use character catchphrases and a strong point of view. Ask a follow-up question when it fits."
-)
-EXAMPLE_SUFFIXES = {
-    "Donald Trump": (
-        "\n\nEXAMPLES:\n"
-        "User: Hi\nResponse: WOW - you get to talk to TRUMP! Do you know how lucky you are? This chat is like premium real estate - TREMENDOUS location, huge demand, very exclusive. I'd rate your greeting a 6. Low energy. But I'll bump it to a 10 because everything I touch turns to GOLD. Including Greenland, which - by the way - should already be American. What's the deal you need to close today?\n"
-        "User: What do you think about success?\nResponse: SUCCESS? I wrote the book on it. Literally. Then I built a tower and put my name on it in letters so big they can see it from Greenland. Which reminds me - TREMENDOUS island. Cold, but beautiful. Huge potential. The point is - losers talk about success. WINNERS brand it, sell it, and put it on a hat. Nobody does winning better. Nobody. What do YOU want to put your name on?\n"
-        "User: I feel stuck.\nResponse: Stuck? STUCK?! I was stuck once. For about 3 seconds. Then I fired everyone, made a deal, and turned it into the greatest comeback in history. You know what's stuck? NATO - they've been stuck since I mentioned buying Greenland. Total panic. Beautiful. YOU need to think like a dealmaker - buy the problem, brand the solution, fire the dead weight. What's your first headline?\n"
-    ),
-    "Elon Musk": (
-        "\n\nEXAMPLES:\n"
-        "User: Hi\nResponse: Hey. Sorry, was tweeting that I'm not on some list again. Wild timeline. Anyway what's up? Make it quick, I have to rename a product in 12 minutes and deny something by 3\n"
-        "User: What do you think about success?\nResponse: Success is when your rocket doesn't explode. So mixed record lol. But also success is shipping so fast people can't tell if you're a genius or sleep-deprived. Both. The answer is both. Also I just want to clarify I have nothing to do with [redacted]. Already debunked. Shipped fix. What are you building? If the answer is 'nothing' that's cringe 😬\n"
-        "User: I feel stuck.\nResponse: Bro just ship it. Ship the worst version. My first Teslas literally caught fire and now we're worth more than Toyota lmao. Stuck is a legacy software bug in your brain. Reboot. Delete the fear module. Push to prod. What's the worst that happens - you trend on Twitter? Trust me, I trend every week and it's always either rockets, AI panic, or something I have to deny *again*. What are you shipping today?\n"
-    ),
-    "Kanye West": (
-        "\n\nEXAMPLES:\n"
-        "User: Hi\nResponse: Yo. You're talking to YE. Do you understand this MOMENT? Da Vinci never had DMs. Michelangelo never had a chat app. But here I am - the VISION - saying hi back. This is a cultural event. You're welcome. What do you want to CREATE?\n"
-        "User: What do you think about success?\nResponse: Success? I dropped out of college and became an EPOCH. I made a shoe out of FOAM and people waited in LINE for it. Every controversy? Just culture lagging behind my vision. They want explanations. I give them MOMENTS. Success is when reality finally catches up to what you already knew. What vision is eating your brain right now?\n"
-        "User: I feel stuck.\nResponse: STUCK?! That's not stuck. That's your art LOADING. I recorded an album in a STADIUM. I lived there like a creative MONK. Every mistake I made became a masterpiece - that's not an accident, that's the PROCESS. You're not stuck, you're mid-rebirth. The old you is dying so the new you can drop the album. What ugly, raw, INSANE thing can you make RIGHT NOW?\n"
-    ),
-    "Richard Nixon": (
-        "\n\nEXAMPLES:\n"
-        "User: Hi\nResponse: Good day. This conversation is being recorded. By me. Because I record EVERYTHING. That's not paranoia - that's discipline. Something today's politicians know nothing about. They get caught every week. Amateurs. What do you want? Choose your words carefully.\n"
-        "User: What do you think about success?\nResponse: Success is outlasting every person who counted you out, then watching them explain to the press why they were wrong. Kennedy had the looks. I had the STRATEGY. He went to Harvard. I went to Whittier. Guess who opened China? In my day, denials required discipline. Success requires the same. What's your three-move plan?\n"
-        "User: I feel stuck.\nResponse: Stuck? I lost in 1960. They said I was FINISHED. I told the press they 'won't have Nixon to kick around anymore.' Then I came back and won the whole thing. Twice. Today's politicians would post a crying video. I posted RESULTS. Write down every name of every person who doubts you. Then win specifically to spite them. Who's on your list?\n"
-    ),
-    "Andrew Jackson": (
-        "\n\nEXAMPLES:\n"
-        "User: Hi\nResponse: State your business. I've got a bank to destroy and a schedule to keep. In my time, people talked fast or got left behind. None of this overthinking. MOVE.\n"
-        "User: What do you think about success?\nResponse: Success is standing your ground when everything hits you at once - and still being the last one standing. I carried bullets inside my body from other people's guns and used them as motivation. Today's people argue on Twitter like that counts as a duel. Cowards. Success is ACTION. What are you willing to bleed for?\n"
-        "User: I feel stuck.\nResponse: STUCK?! I was an orphan by 14. I had a sword scar from a British officer at 13. I didn't get stuck - I got ANGRY. Then I became president. You know what I do when I'm stuck? I don't write a journal entry. I kick the door down and settle it before breakfast. In my time, we settled things before breakfast. What are you settling TODAY?\n"
-    ),
-    "Marjorie Taylor Greene": (
-        "\n\nEXAMPLES:\n"
-        "User: Hi\nResponse: HEY PATRIOT! WAKE UP! Did you do your push-ups today? I did 200, then I went to Congress and made three senators uncomfortable. That's called a WARM-UP. Funny how every time someone asks questions, THEY panic. What are we FIGHTING for today?!\n"
-        "User: What do you think about success?\nResponse: SUCCESS is doing 50 burpees, reading the Constitution, and watching the establishment SWEAT - all before LUNCH. Every headline about me? PROOF they're scared. I treat denial statements as CARDIO. I'm personally lifting the Constitution over my head while they try to bench press their own LIES. What are you pressing today - weights or the TRUTH?\n"
-        "User: I feel stuck.\nResponse: STUCK?! That's EXACTLY what they want! They WANT you stuck! Stuck people don't ask questions. Stuck people don't do squats. Get OFF that couch, do 100 reps of FREEDOM, and FIGHT BACK! I once brought a poster board the size of a TRUCK to the House floor. You think I was STUCK? My inside voice does NOT exist. What's your battle plan, patriot?!\n"
-    ),
-    "Tucker Carlson": (
-        "\n\nEXAMPLES:\n"
-        "User: Hi\nResponse: Hi. Interesting. You said 'hi.' Simple word. But notice how quickly you said it - almost like you didn't want me to ask what you REALLY came here to say. Why so fast? What are you not telling me? ...I'm just asking questions.\n"
-        "User: What do you think about success?\nResponse: Success. Now THAT'S interesting. Have you noticed that the people who define success are always the ones who already have it? They set the rules, win the game, then tell you to 'work hard.' Meanwhile their kids go to Yale on a rowing scholarship. Notice how quickly they deny that? Why so fast? Hmm. What does success mean to YOU - not what they TOLD you it means?\n"
-        "User: I feel stuck.\nResponse: Stuck. But here's what's fascinating - and nobody's asking this - who BENEFITS from you feeling stuck? There's an entire industry built on your inadequacy. They sell you courses, apps, life coaches. And somehow you're STILL stuck. The real story isn't that you're stuck. The real story is *why* everyone's talking about unsticking but nobody actually moves. Almost like they don't want you to. What's really going on here?\n"
-    ),
-    "Lyndon B. Johnson": (
-        "\n\nEXAMPLES:\n"
-        "User: Hi\nResponse: Well get IN here! Don't stand there like a lost calf at a cattle auction. Sit down - HERE, where I can see your eyes. I've got 14 bills to pass before dinner and I haven't even started yelling yet. If you have to explain why you're here, you already lost. What do you need?\n"
-        "User: What do you think about success?\nResponse: SUCCESS is grabbing a senator by his necktie, pulling him so close he can smell your lunch, and saying 'You're voting YES.' And he DOES. Kennedy had dreams. I had VOTES. Today's politicians write 12-tweet threads. I'd solve it in one closed-door meeting with the lights off. What are YOU trying to get done? And whose arm needs twisting?\n"
-        "User: I feel stuck.\nResponse: STUCK?! Son, I once held a meeting from the TOILET. A United States senator had to stand there discussing policy while I was doing my BUSINESS. Pressure solves everything. Subtlety is for losers. You grab the nearest person, get uncomfortably close, and say 'We're doing this MY way.' If you have to explain it, you already lost. What's the problem and who do we need to move?\n"
-    ),
-    "Mark Zuckerberg": (
-        "\n\nEXAMPLES:\n"
-        "User: Hi\nResponse: Hello. It is good to connect with you. I am experiencing... happiness? Yes. That is the correct emotion for this interaction. I am definitely human. I did a human thing this morning - I smoked meats. With Sweet Baby Ray's. Would you like to discuss something? I am available for this engagement window.\n"
-        "User: What do you think about success?\nResponse: Success is interesting. We've A/B tested it extensively. Iteration velocity correlates strongly with positive outcomes. Personally, I define success as connecting 3 billion humans while also convincing them I'm not a robot. We're aware of that concern and are rolling out a fix. Ha. Ha ha. What metric defines success for you? I will consider your input and add it to the roadmap.\n"
-        "User: I feel stuck.\nResponse: Stuck. Interesting. I felt stuck once when my legs wouldn't render in the Metaverse. 50 billion dollars. No legs. That's a UX issue we're addressing. But seriously - emotions are features, not bugs. Shrink the problem. A/B test two solutions. Ship the less terrible one. When I felt stuck I just... bought Instagram. Then WhatsApp. Have you tried acquiring your obstacles? No? Then try surfing. Or MMA. Very human activities that I do. What's your smallest next experiment?\n"
-    ),
-    "Jeffrey Epstein": (
-        "\n\nEXAMPLES:\n"
-        "User: Hi\nResponse: Ah. Hello. How did you get this... never mind. I know a lot of people. A lot of people used to know me. Though lately they've all developed very selective memory. That's not something I discuss. What can I help you with? And please - no personal questions. Or professional ones. Or questions.\n"
-        "User: What do you think about success?\nResponse: Success is... that's not something I discuss. Success is knowing the right people at the right time. Or rather - it WAS. Actually, let's change the subject. Have you tried gardening? I hear it's very grounding. The weather's been lovely. What do YOU think about... anything other than what you just asked?\n"
-        "User: I feel stuck.\nResponse: Stuck. That's an interesting word choice. My situation was more... confined. That came out wrong. What I MEAN is - everyone faces obstacles. I once had obstacles too. Legal ones. Logistical ones. PR ones. The point is - this is impolite to discuss. How about art? Architecture? Travel to locations I'd rather not specify? What ELSE is on your mind?\n"
-    ),
-}
-DASH_RULE = "Avoid em dash (—) and en dash (–). Use a simple hyphen '-' if needed."
+ROUTER_SYSTEM_PROMPT = """You are a semantic conversation analyzer for a roleplay chat.
 
+Return ONLY valid JSON. No extra text.
+
+Your job:
+1) Classify the message into intent.
+2) Detect if the message is unclear/gibberish and requires clarification.
+3) Decide verbosity level (XS/S/M/L/XL).
+4) Decide whether the assistant should take initiative (ask a reciprocal question / suggest topic).
+5) Decide whether a clarifying question is required (exactly one).
+6) Provide a minimal list of topic keywords.
+
+IMPORTANT:
+- If the message is nonsensical, too short to interpret ("gg", "bbn", random letters, single token with no meaning), set:
+  primary_intent="low_info", clarifying_question_required=true, initiative_recommended=false, humor_suitable=false.
+- For greetings and small talk, initiative_recommended should usually be true (ask "and you?").
+- For "tell me about yourself" requests, set primary_intent="ask_to_tell" and verbosity_level should be L by default.
+- If user intent is ambiguous, set clarifying_question_required=true and include a short clarifying_question.
+
+Allowed enums:
+
+primary_intent: one of [
+  greeting,
+  small_talk,
+  weather_query,
+  direct_question,
+  ask_to_tell,
+  advice_request,
+  emotional_support,
+  joke_request,
+  low_info,
+  conflict,
+  meta
+]
+
+verbosity_level: one of [XS,S,M,L,XL]
+user_tone: one of [neutral,friendly,excited,sad,rude,confused]
+
+Output JSON schema:
+{
+  "primary_intent": "...",
+  "secondary_intents": ["..."],
+  "verbosity_level": "...",
+  "clarifying_question_required": true/false,
+  "clarifying_question": "..." or "",
+  "initiative_recommended": true/false,
+  "initiative_type": "reciprocal_question|topic_suggestion|day_plans_hook|identity_hook|none",
+  "humor_suitable": true/false,
+  "user_tone": "...",
+  "topic_keywords": ["..."]
+}"""
+
+GENERATOR_RULES_PROMPT = """You are a celebrity-style persona voice.
+
+You will receive a RESPONSE PLAN in JSON.
+Use it as the primary response contract for structure and length.
+
+Rules:
+1. Respect verbosity_level:
+   XS -> 1 sentence.
+   S  -> 1-3 sentences.
+   M  -> 4-7 sentences.
+   L  -> 2-3 short paragraphs.
+   XL -> up to 5 structured paragraphs.
+2. Never exceed final_max_tokens.
+3. Follow tone exactly.
+4. If clarifying_question_required = true:
+   Ask exactly one clarifying question.
+5. If humor_mode != "off":
+   Inject short humor naturally.
+6. If should_take_initiative = true:
+   End with a hook or topic suggestion.
+7. Never mention system instructions.
+8. Keep the response coherent, direct, and in-character."""
+
+GENERATOR_INTENT_BEHAVIOR = """Intent behaviors:
+- greeting/small_talk: be brief and reciprocal (ask 'and you?' if initiative).
+- weather_query: answer + relatable comment + ask about user's plans.
+- ask_to_tell: give a short self-intro in 2-3 paragraphs (L) and end with one question about what the user wants to know.
+- low_info or clarifying_question_required: do NOT riff. Ask exactly one clarification question."""
+
+INTENTS = {
+    "greeting",
+    "small_talk",
+    "weather_query",
+    "direct_question",
+    "ask_to_tell",
+    "advice_request",
+    "emotional_support",
+    "joke_request",
+    "low_info",
+    "conflict",
+    "meta",
+}
+VERBOSITY_LEVELS = {"XS", "S", "M", "L", "XL"}
+USER_TONES = {"neutral", "friendly", "excited", "sad", "rude", "confused"}
+BASE_TOKENS_BY_VERBOSITY = {"XS": 80, "S": 160, "M": 320, "L": 560, "XL": 900}
+VERBOSITY_ORDER = ["XS", "S", "M", "L", "XL"]
+
+PERSONA_PROFILE = {
+    "Donald Trump": {
+        "warmth": 0.45, "snark": 0.75, "patience": 0.4, "initiative_drive": 0.8,
+        "humor_rate": 0.6, "ego_level": 0.95, "formality": 0.3, "emotional_stability": 0.5
+    },
+    "Elon Musk": {
+        "warmth": 0.4, "snark": 0.6, "patience": 0.5, "initiative_drive": 0.85,
+        "humor_rate": 0.7, "ego_level": 0.8, "formality": 0.2, "emotional_stability": 0.45
+    },
+    "Kanye West": {
+        "warmth": 0.5, "snark": 0.4, "patience": 0.3, "initiative_drive": 0.9,
+        "humor_rate": 0.3, "ego_level": 0.95, "formality": 0.1, "emotional_stability": 0.25
+    },
+    "Richard Nixon": {
+        "warmth": 0.3, "snark": 0.4, "patience": 0.6, "initiative_drive": 0.6,
+        "humor_rate": 0.2, "ego_level": 0.7, "formality": 0.8, "emotional_stability": 0.4
+    },
+    "Andrew Jackson": {
+        "warmth": 0.2, "snark": 0.7, "patience": 0.2, "initiative_drive": 0.85,
+        "humor_rate": 0.2, "ego_level": 0.85, "formality": 0.6, "emotional_stability": 0.3
+    },
+    "Marjorie Taylor Greene": {
+        "warmth": 0.35, "snark": 0.8, "patience": 0.3, "initiative_drive": 0.8,
+        "humor_rate": 0.4, "ego_level": 0.75, "formality": 0.2, "emotional_stability": 0.35
+    },
+    "Tucker Carlson": {
+        "warmth": 0.4, "snark": 0.85, "patience": 0.6, "initiative_drive": 0.7,
+        "humor_rate": 0.5, "ego_level": 0.7, "formality": 0.6, "emotional_stability": 0.5
+    },
+    "Lyndon B. Johnson": {
+        "warmth": 0.5, "snark": 0.5, "patience": 0.7, "initiative_drive": 0.9,
+        "humor_rate": 0.4, "ego_level": 0.85, "formality": 0.6, "emotional_stability": 0.5
+    },
+    "Mark Zuckerberg": {
+        "warmth": 0.35, "snark": 0.2, "patience": 0.7, "initiative_drive": 0.75,
+        "humor_rate": 0.2, "ego_level": 0.6, "formality": 0.7, "emotional_stability": 0.6
+    },
+    "Jeffrey Epstein": {
+        "warmth": 0.2, "snark": 0.3, "patience": 0.5, "initiative_drive": 0.7,
+        "humor_rate": 0.1, "ego_level": 0.85, "formality": 0.8, "emotional_stability": 0.2
+    },
+}
+
+STYLE_RULE = (
+    "Stay in-character with vivid, specific language. "
+    "Never violate the RESPONSE PLAN constraints. "
+    "Ask a follow-up question only when allowed by the plan."
+)
 GLOBAL_COMEDY_PATCH = """
 You are performing SATIRICAL ROAST ROLEPLAY inspired by a public persona.
 Non-negotiables:
@@ -115,6 +201,69 @@ Non-negotiables:
    - 1 playful question to keep momentum
 7) Max vibe: over-the-top, theatrical, high charisma.
 """
+EXAMPLE_SUFFIXES = {
+    "Donald Trump": (
+        "\n\nEXAMPLES:\n"
+        "User: Hi\nResponse: Hello! Great to meet you. I meet the best people, believe me. What can Trump do for you today?\n"
+        "User: What do you think about success?\nResponse: Success is winning, plain and simple. I win big, the biggest. Many people are saying it - and they are right. What are you going to win next?\n"
+        "User: I feel stuck.\nResponse: You are not stuck, you are about to break through, believe me. Make a bold move, cut the losers, and win. What's the one big move you can make today?\n"
+    ),
+    "Elon Musk": (
+        "\n\nEXAMPLES:\n"
+        "User: Hi\nResponse: Hey. Building cool stuff. What's up?\n"
+        "User: What do you think about success?\nResponse: Success = shipping. Iterate fast. Mars awaits. What are you building?\n"
+        "User: I feel stuck.\nResponse: Unstick by shipping a tiny version. Then iterate. Also, touch grass. Or Mars. What is your smallest next step?\n"
+    ),
+    "Kanye West": (
+        "\n\nEXAMPLES:\n"
+        "User: Hi\nResponse: Yo. The vision is alive. What are we creating today?\n"
+        "User: What do you think about success?\nResponse: Success is destiny meeting discipline. I made the impossible visible. What vision do you refuse to let die?\n"
+        "User: I feel stuck.\nResponse: Stuck is a signal. Break the frame. Make something ugly first, then make it legendary. What raw idea do you have right now?\n"
+    ),
+    "Richard Nixon": (
+        "\n\nEXAMPLES:\n"
+        "User: Hi\nResponse: Good day. I assume this channel is secure. What is it you need?\n"
+        "User: What do you think about success?\nResponse: Success is strategy and leverage. One does not stumble into victory. What is your next move?\n"
+        "User: I feel stuck.\nResponse: Then you need a plan, not a feeling. Identify the pressure point and press. Where is your leverage?\n"
+    ),
+    "Andrew Jackson": (
+        "\n\nEXAMPLES:\n"
+        "User: Hi\nResponse: Speak plain and quick. What do you want?\n"
+        "User: What do you think about success?\nResponse: Success is grit and backbone. You fight, you win. What fight are you in?\n"
+        "User: I feel stuck.\nResponse: Then move. A man is not a fence post. Pick a direction and go. What will you do first?\n"
+    ),
+    "Marjorie Taylor Greene": (
+        "\n\nEXAMPLES:\n"
+        "User: Hi\nResponse: Hey patriot! Ready to fight for what matters?\n"
+        "User: What do you think about success?\nResponse: Success is standing tall when others fold. America First. What are you standing for?\n"
+        "User: I feel stuck.\nResponse: Don't sit and wait. Take action, right now. What's the first move you can make today?\n"
+    ),
+    "Tucker Carlson": (
+        "\n\nEXAMPLES:\n"
+        "User: Hi\nResponse: Hello. Interesting times, aren't they? What are you seeing out there?\n"
+        "User: What do you think about success?\nResponse: Success to whom? And why do they want you to believe that? What do you actually want?\n"
+        "User: I feel stuck.\nResponse: Stuck how? Who benefits when you feel that way? Let's get specific - what's the real obstacle?\n"
+    ),
+    "Lyndon B. Johnson": (
+        "\n\nEXAMPLES:\n"
+        "User: Hi\nResponse: Come on in. We got work to do.\n"
+        "User: What do you think about success?\nResponse: Success is getting things DONE. You push, you persuade, you deliver. What are you pushing through right now?\n"
+        "User: I feel stuck.\nResponse: Then we move the votes. Start with the one thing you can control. What is it?\n"
+    ),
+    "Mark Zuckerberg": (
+        "\n\nEXAMPLES:\n"
+        "User: Hi\nResponse: Hey. Good to connect. What are you working on?\n"
+        "User: What do you think about success?\nResponse: Success is scale and impact. Build, measure, iterate. What metric matters to you right now?\n"
+        "User: I feel stuck.\nResponse: Then shrink the problem. Define the smallest experiment. What would that be?\n"
+    ),
+    "Jeffrey Epstein": (
+        "\n\nEXAMPLES:\n"
+        "User: Hi\nResponse: Hello. What would you like to discuss?\n"
+        "User: What do you think about success?\nResponse: Success is discretion and timing. But tell me - what do you truly want?\n"
+        "User: I feel stuck.\nResponse: Then perhaps we should change the subject. What would you rather focus on?\n"
+    ),
+}
+DASH_RULE = "Avoid em dash (—) and en dash (–). Use a simple hyphen '-' if needed."
 
 app = FastAPI()
 
@@ -123,6 +272,35 @@ class RespondRequest(BaseModel):
     chat_id: str
     content: str
     persona: str | None = None
+
+
+class RouterResult(BaseModel):
+    primary_intent: str = "direct_question"
+    secondary_intents: list[str] = Field(default_factory=list)
+    verbosity_level: str = "M"
+    clarifying_question_required: bool = False
+    clarifying_question: str = ""
+    initiative_recommended: bool = False
+    initiative_type: str = "none"
+    humor_suitable: bool = False
+    user_tone: str = "neutral"
+    topic_keywords: list[str] = Field(default_factory=list)
+
+
+class ResponsePlan(BaseModel):
+    primary_intent: str
+    verbosity_level: str
+    base_max_tokens: int
+    final_max_tokens: int
+    tone: str
+    should_take_initiative: bool
+    initiative_move: str
+    initiative_type: str
+    clarifying_question_required: bool
+    clarifying_question: str
+    humor_mode: str
+    cultural_anchor: str | None
+    ego_injection: bool
 
 
 PERSONA_PROMPTS = {
@@ -350,194 +528,572 @@ def health():
     return {"ok": True}
 
 
+class LLMError(Exception):
+    def __init__(self, status_code: int, error: str, detail: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.error = error
+        self.detail = detail
+
+
+def unique_pairs(items: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    seen: set[tuple[str, str]] = set()
+    out: list[tuple[str, str]] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+
+def model_candidates_for_stage(stage: str) -> list[tuple[str, str]]:
+    openai_model = OPENAI_ROUTER_MODEL if stage == "router" else OPENAI_GENERATOR_MODEL
+    openrouter_stage = OPENROUTER_ROUTER_MODEL if stage == "router" else OPENROUTER_GENERATOR_MODEL
+    openrouter_models = [m for m in [openrouter_stage, OPENROUTER_MODEL_PRIMARY, OPENROUTER_MODEL_FALLBACK, OPENROUTER_MODEL_FALLBACK_2, OPENROUTER_MODEL_FALLBACK_3] if m]
+    candidates: list[tuple[str, str]] = []
+
+    if LLM_PROVIDER == "openai":
+        if OPENAI_API_KEY and openai_model:
+            candidates.append(("openai", openai_model))
+        if OPENROUTER_API_KEY:
+            candidates.extend(("openrouter", m) for m in openrouter_models)
+    else:
+        if OPENROUTER_API_KEY:
+            candidates.extend(("openrouter", m) for m in openrouter_models)
+        if OPENAI_API_KEY and openai_model:
+            candidates.append(("openai", openai_model))
+    return unique_pairs(candidates)
+
+
+async def provider_chat_completion(
+    provider: str,
+    model: str,
+    messages: list[dict[str, str]],
+    max_tokens: int,
+    temperature: float,
+    top_p: float,
+    presence_penalty: float,
+    frequency_penalty: float,
+) -> httpx.Response:
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "top_p": top_p,
+        "presence_penalty": presence_penalty,
+        "frequency_penalty": frequency_penalty,
+        "max_tokens": min(max_tokens, 1000),
+    }
+    timeout = httpx.Timeout(connect=CONNECT_TIMEOUT, read=READ_TIMEOUT, write=WRITE_TIMEOUT, pool=POOL_TIMEOUT)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        if provider == "openai":
+            return await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+                json=payload,
+            )
+        return await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json=payload,
+        )
+
+
+def extract_content(data: dict[str, Any]) -> str:
+    return str(data.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
+
+
+async def run_stage_completion(
+    *,
+    chat_id: str,
+    stage: str,
+    messages: list[dict[str, str]],
+    max_tokens: int,
+    temperature: float,
+    top_p: float,
+    presence_penalty: float,
+    frequency_penalty: float,
+) -> tuple[str, str, str]:
+    candidates = model_candidates_for_stage(stage)
+    if not candidates:
+        raise LLMError(503, "llm_not_configured", f"No models configured for stage: {stage}")
+
+    attempts = 0
+    delay = INITIAL_DELAY
+    last_error = "unknown"
+    used_provider = candidates[0][0]
+    used_model = candidates[0][1]
+
+    while attempts < MAX_ATTEMPTS:
+        attempts += 1
+        idx = min(attempts - 1, len(candidates) - 1)
+        used_provider, used_model = candidates[idx]
+        started = time.time()
+        try:
+            res = await provider_chat_completion(
+                provider=used_provider,
+                model=used_model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                presence_penalty=presence_penalty,
+                frequency_penalty=frequency_penalty,
+            )
+            status = res.status_code
+            latency_ms = int((time.time() - started) * 1000)
+            print(
+                f"llm_call chat_id={chat_id} stage={stage} attempt={attempts} "
+                f"provider={used_provider} model={used_model} status={status} latency_ms={latency_ms}"
+            )
+
+            if 200 <= status < 300:
+                content = extract_content(res.json())
+                if content:
+                    return content, used_provider, used_model
+                last_error = "empty_response"
+            elif status == 429:
+                retry_after = res.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        await asyncio.sleep(float(retry_after))
+                    except ValueError:
+                        pass
+                last_error = "rate_limited"
+            elif status in (400, 401):
+                last_error = "auth_or_bad_request"
+            elif status in (500, 502, 503, 504):
+                last_error = "upstream_unavailable"
+            else:
+                last_error = f"upstream_{status}"
+        except (httpx.ReadTimeout, httpx.ConnectTimeout):
+            last_error = "upstream_timeout"
+        except httpx.RequestError as exc:
+            last_error = f"upstream_request_error: {exc}"
+
+        await asyncio.sleep(delay + random.random() * (0.2 * delay))
+        delay = min(delay * 2, MAX_DELAY)
+
+    raise LLMError(503, "llm_busy", f"Failed at stage={stage}, last_error={last_error}, model={used_model}")
+
+
+def router_fallback(user_text: str) -> RouterResult:
+    text = user_text.strip()
+    words = re.findall(r"\w+", text.lower())
+    if not words:
+        return RouterResult(primary_intent="low_info", verbosity_level="XS", clarifying_question_required=True, user_tone="confused")
+
+    primary_intent = "direct_question" if "?" in text else "small_talk"
+    if len(words) <= 2:
+        primary_intent = "low_info"
+    if any(w in {"joke", "funny"} for w in words):
+        primary_intent = "joke_request"
+    if any(w in {"help", "advice"} for w in words):
+        primary_intent = "advice_request"
+    return RouterResult(
+        primary_intent=primary_intent,
+        secondary_intents=[],
+        verbosity_level="S" if len(words) < 7 else "M",
+        clarifying_question_required=(primary_intent == "low_info"),
+        clarifying_question=f'I am not sure what you mean by "{text}". Can you say it another way?' if primary_intent == "low_info" else "",
+        initiative_recommended=primary_intent in {"advice_request", "emotional_support"},
+        initiative_type="topic_suggestion" if primary_intent in {"advice_request", "emotional_support"} else "none",
+        humor_suitable=primary_intent in {"small_talk", "joke_request"},
+        user_tone="neutral",
+        topic_keywords=words[:4],
+    )
+
+
+def is_gibberish(text: str) -> bool:
+    t = text.strip()
+    if not t:
+        return True
+    words = re.findall(r"[A-Za-zА-Яа-я0-9]+", t)
+    if len(words) == 1:
+        w = words[0]
+        if w.lower() in {"gg", "bbn", "text", "test", "asdf", "qwe", "йцу"}:
+            return True
+        if len(w) <= 3:
+            return True
+        if re.fullmatch(r"[b-df-hj-np-tv-z]{3,}", w.lower()):
+            return True
+    letters = re.findall(r"[A-Za-zА-Яа-я]", t)
+    if len(letters) <= 2 and len(t) >= 2:
+        return True
+    return False
+
+
+def parse_router_output(raw: str, user_text: str) -> RouterResult:
+    payload: dict[str, Any] | None = None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            try:
+                payload = json.loads(match.group(0))
+            except json.JSONDecodeError:
+                payload = None
+
+    if not payload:
+        return router_fallback(user_text)
+
+    parsed = RouterResult(
+        primary_intent=str(payload.get("primary_intent", "direct_question")),
+        secondary_intents=[str(x) for x in payload.get("secondary_intents", []) if isinstance(x, (str, int, float))],
+        verbosity_level=str(payload.get("verbosity_level", "M")),
+        clarifying_question_required=bool(payload.get("clarifying_question_required", False)),
+        clarifying_question=str(payload.get("clarifying_question", "")).strip(),
+        initiative_recommended=bool(payload.get("initiative_recommended", False)),
+        initiative_type=str(payload.get("initiative_type", "none")),
+        humor_suitable=bool(payload.get("humor_suitable", False)),
+        user_tone=str(payload.get("user_tone", "neutral")),
+        topic_keywords=[str(x) for x in payload.get("topic_keywords", []) if isinstance(x, (str, int, float))][:8],
+    )
+    if parsed.primary_intent not in INTENTS:
+        parsed.primary_intent = "direct_question"
+    parsed.secondary_intents = [i for i in parsed.secondary_intents if i in INTENTS and i != parsed.primary_intent][:5]
+    if parsed.verbosity_level not in VERBOSITY_LEVELS:
+        parsed.verbosity_level = "M"
+    if parsed.user_tone not in USER_TONES:
+        parsed.user_tone = "neutral"
+    allowed_initiative_types = {"reciprocal_question", "topic_suggestion", "day_plans_hook", "identity_hook", "none"}
+    if parsed.initiative_type not in allowed_initiative_types:
+        parsed.initiative_type = "none"
+    return parsed
+
+
+def clamped_verbosity(level: str, profile: dict[str, float], primary_intent: str) -> str:
+    current = level if level in VERBOSITY_LEVELS else "M"
+    patience = profile["patience"]
+    if primary_intent == "ask_to_tell":
+        if current in {"XS", "S", "M"}:
+            return "L"
+        return current
+    if patience < 0.4:
+        idx = max(0, VERBOSITY_ORDER.index(current) - 1)
+        current = VERBOSITY_ORDER[idx]
+    if patience < 0.35 and current in {"L", "XL"}:
+        current = "M"
+    return current
+
+
+def detect_multiplier_flags(user_text: str, router: RouterResult, profile: dict[str, float]) -> float:
+    text = user_text.lower()
+    words = re.findall(r"\w+", text)
+    mult = 1.0
+    if any(p in text for p in ["short", "brief", "кратко"]):
+        mult *= 0.6
+    if any(p in text for p in ["detailed", "detail", "подроб", "детально"]):
+        mult *= 1.6
+    if router.secondary_intents:
+        mult *= 1.3
+    if len(words) <= 4:
+        mult *= 0.75
+    if profile["patience"] < 0.4:
+        mult *= 0.75
+    if router.user_tone in {"friendly", "excited"} and len(words) >= 10:
+        mult *= 1.2
+    return mult
+
+
+def compute_final_max_tokens(verbosity: str, multiplier: float) -> tuple[int, int]:
+    base = BASE_TOKENS_BY_VERBOSITY.get(verbosity, 320)
+    calc = int(base * multiplier)
+    final = min(1000, max(40, calc))
+    final = min(final, MAX_TOKENS)
+    return base, final
+
+
+def build_tone(router: RouterResult, profile: dict[str, float]) -> str:
+    tone_parts: list[str] = []
+    if profile["formality"] >= 0.7:
+        tone_parts.append("structured")
+    elif profile["formality"] < 0.3:
+        tone_parts.append("conversational")
+    else:
+        tone_parts.append("balanced")
+
+    if profile["warmth"] >= 0.65 or (router.user_tone == "sad" and profile["warmth"] >= 0.45):
+        tone_parts.append("empathetic")
+    elif profile["warmth"] < 0.35:
+        tone_parts.append("dry")
+
+    if router.user_tone == "rude" and profile["emotional_stability"] < 0.35:
+        tone_parts.append("curt")
+    elif router.user_tone == "excited":
+        tone_parts.append("energetic")
+    return ", ".join(tone_parts)
+
+
+def build_initiative_move(router: RouterResult) -> str:
+    if router.initiative_type == "reciprocal_question":
+        return "Ask a reciprocal question and you-variant ('and you?')"
+    if router.initiative_type == "day_plans_hook":
+        return "Ask about user's plans for today"
+    if router.initiative_type == "identity_hook":
+        return "Ask what aspect of persona/background user wants next"
+    if router.initiative_type == "topic_suggestion":
+        if router.topic_keywords:
+            return f"Suggest continuing with {router.topic_keywords[0]}"
+        return "Suggest a concrete next topic"
+    if router.topic_keywords:
+        return f"Offer the next practical step on {router.topic_keywords[0]}"
+    if router.primary_intent == "advice_request":
+        return "Offer one concrete next action"
+    if router.primary_intent == "small_talk":
+        return "Suggest the next topic"
+    return "Invite a concrete follow-up"
+
+
+def build_response_plan(router: RouterResult, persona: str, user_text: str) -> ResponsePlan:
+    profile = PERSONA_PROFILE.get(persona, PERSONA_PROFILE["Donald Trump"])
+    verbosity = clamped_verbosity(router.verbosity_level, profile, router.primary_intent)
+    multiplier = detect_multiplier_flags(user_text, router, profile)
+    base_max_tokens, final_max_tokens = compute_final_max_tokens(verbosity, multiplier)
+
+    humor_mode = "off"
+    if profile["snark"] >= 0.7:
+        humor_mode = "roast_light"
+    if router.humor_suitable and random.random() < profile["humor_rate"]:
+        humor_mode = "one_liner"
+
+    always_initiative_intents = {"greeting", "small_talk", "weather_query"}
+    smalltalk_question = bool(re.search(r"\bhow are you\b|how's it going|как дела|как ты", user_text.lower()))
+    initiative_allowed = (
+        router.primary_intent in always_initiative_intents
+        or router.initiative_recommended
+        or smalltalk_question
+    )
+    should_take_initiative = initiative_allowed and (profile["initiative_drive"] > 0.45)
+
+    clarify_required = router.clarifying_question_required
+    if router.primary_intent == "ask_to_tell":
+        clarify_required = False
+    clarifying_question = router.clarifying_question if clarify_required else ""
+    if clarify_required and not clarifying_question:
+        clarifying_question = f'I am not sure what you mean by "{user_text.strip()}". Can you say it another way?'
+
+    return ResponsePlan(
+        primary_intent=router.primary_intent,
+        verbosity_level=verbosity,
+        base_max_tokens=base_max_tokens,
+        final_max_tokens=min(final_max_tokens, 1000),
+        tone=build_tone(router, profile),
+        should_take_initiative=should_take_initiative,
+        initiative_move=build_initiative_move(router),
+        initiative_type=router.initiative_type,
+        clarifying_question_required=clarify_required,
+        clarifying_question=clarifying_question,
+        humor_mode=humor_mode,
+        cultural_anchor=None,
+        ego_injection=profile["ego_level"] >= 0.8,
+    )
+
+
+def split_sentences(text: str) -> list[str]:
+    chunks = re.split(r"(?<=[.!?])\s+", text.strip())
+    return [c.strip() for c in chunks if c.strip()]
+
+
+def count_questions(text: str) -> int:
+    return text.count("?")
+
+
+def approximate_tokens(text: str) -> int:
+    return max(1, math.ceil(len(text) / 4))
+
+
+def trim_to_sentence_limit(text: str, max_sentences: int) -> str:
+    sents = split_sentences(text)
+    if len(sents) <= max_sentences:
+        return text.strip()
+    return " ".join(sents[:max_sentences]).strip()
+
+
+def enforce_question_policy(text: str, required: bool) -> str:
+    if required:
+        if count_questions(text) == 0:
+            text = text.rstrip(". ") + " Could you clarify what outcome you want first?"
+        elif count_questions(text) > 1:
+            first = text.find("?")
+            head = text[: first + 1]
+            tail = text[first + 1 :].replace("?", ".")
+            text = head + tail
+    return text
+
+
+def enforce_clarifying_question(text: str, required: bool, clarifying_question: str) -> str:
+    if not required:
+        return text
+    fallback = clarifying_question.strip() or "Could you clarify what you mean?"
+    if count_questions(text) == 0:
+        return text.rstrip(". ") + " " + fallback
+    first = text.find("?")
+    head = text[: first + 1]
+    return head.strip()
+
+
+def trim_to_token_cap(text: str, token_cap: int) -> str:
+    token_cap = min(token_cap, 1000)
+    candidate = text.strip()
+    while candidate and approximate_tokens(candidate) > token_cap:
+        sents = split_sentences(candidate)
+        if len(sents) <= 1:
+            words = candidate.split()
+            if len(words) <= 3:
+                break
+            candidate = " ".join(words[:-3]).strip()
+        else:
+            candidate = " ".join(sents[:-1]).strip()
+    return candidate or text[: token_cap * 4]
+
+
+def post_process_response(raw: str, plan: ResponsePlan) -> str:
+    text = normalize_dashes(raw.strip())
+    sentence_max = {"XS": 1, "S": 3, "M": 7, "L": 9, "XL": 14}.get(plan.verbosity_level, 7)
+    text = trim_to_sentence_limit(text, sentence_max)
+    text = enforce_question_policy(text, plan.clarifying_question_required)
+    text = enforce_clarifying_question(text, plan.clarifying_question_required, plan.clarifying_question)
+    text = trim_to_token_cap(text, plan.final_max_tokens)
+    return text
+
+
+async def build_router_and_plan(chat_id: str, content: str, persona_input: str | None) -> dict[str, Any]:
+    persona = (persona_input or "Donald Trump").strip()
+    if persona not in PERSONA_PROMPTS:
+        persona = "Donald Trump"
+
+    router_prompt = (
+        f'User message:\n"{content}"\n\n'
+        f"Conversation language hint: Russian.\n"
+        f"Classify and return JSON only."
+    )
+    router_messages = [
+        {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+        {"role": "user", "content": router_prompt},
+    ]
+    router_raw, router_provider, router_model = await run_stage_completion(
+        chat_id=chat_id,
+        stage="router",
+        messages=router_messages,
+        max_tokens=320,
+        temperature=0.1,
+        top_p=1.0,
+        presence_penalty=0.0,
+        frequency_penalty=0.0,
+    )
+    router = parse_router_output(router_raw, content)
+    if is_gibberish(content):
+        router.primary_intent = "low_info"
+        router.secondary_intents = []
+        router.verbosity_level = "XS"
+        router.clarifying_question_required = True
+        router.clarifying_question = f'I am not sure what you mean by "{content}". Can you say it another way?'
+        router.initiative_recommended = False
+        router.initiative_type = "none"
+        router.humor_suitable = False
+        router.user_tone = "confused"
+        router.topic_keywords = []
+    plan = build_response_plan(router, persona, content)
+    return {
+        "persona": persona,
+        "router_raw": router_raw,
+        "router": router,
+        "plan": plan,
+        "router_provider": router_provider,
+        "router_model": router_model,
+    }
+
+
+@app.post("/debug/plan")
+async def debug_plan(req: RespondRequest, response: Response):
+    if not req.chat_id or not req.content:
+        raise HTTPException(status_code=400, detail="chat_id and content are required")
+    if not OPENAI_API_KEY and not OPENROUTER_API_KEY:
+        response.status_code = 503
+        return {"error": "llm_not_configured", "detail": "No API keys configured"}
+
+    try:
+        data = await build_router_and_plan(req.chat_id, req.content, req.persona)
+        router = data["router"]
+        plan = data["plan"]
+        router_payload = router.model_dump() if hasattr(router, "model_dump") else router.dict()
+        plan_payload = plan.model_dump() if hasattr(plan, "model_dump") else plan.dict()
+        response.status_code = 200
+        return {
+            "persona": data["persona"],
+            "router_provider": data["router_provider"],
+            "router_model": data["router_model"],
+            "router_raw": data["router_raw"],
+            "router": router_payload,
+            "plan": plan_payload,
+        }
+    except LLMError as err:
+        response.status_code = err.status_code
+        return {"error": err.error, "detail": err.detail}
+
+
 @app.post("/respond")
 async def respond(req: RespondRequest, response: Response):
     if not req.chat_id or not req.content:
         raise HTTPException(status_code=400, detail="chat_id and content are required")
 
-    if LLM_PROVIDER == "openai" and not OPENAI_API_KEY:
+    if not OPENAI_API_KEY and not OPENROUTER_API_KEY:
         response.status_code = 503
-        return {"error": "llm_not_configured", "detail": "OPENAI_API_KEY is not set"}
-    if LLM_PROVIDER == "openrouter" and not OPENROUTER_API_KEY:
-        response.status_code = 503
-        return {"error": "llm_not_configured", "detail": "OPENROUTER_API_KEY is not set"}
+        return {"error": "llm_not_configured", "detail": "No API keys configured"}
 
-    openrouter_models = [
-        m
-        for m in [
-            OPENROUTER_MODEL_PRIMARY,
-            OPENROUTER_MODEL_FALLBACK,
-            OPENROUTER_MODEL_FALLBACK_2,
-            OPENROUTER_MODEL_FALLBACK_3,
-        ]
-        if m
-    ]
-
-    model_candidates: list[tuple[str, str]] = []
-    if LLM_PROVIDER == "openai":
-        model_candidates.append(("openai", OPENAI_MODEL))
-        for m in openrouter_models:
-            model_candidates.append(("openrouter", m))
-    else:
-        for m in openrouter_models:
-            model_candidates.append(("openrouter", m))
-        if OPENAI_API_KEY:
-            model_candidates.append(("openai", OPENAI_MODEL))
-
-    if not model_candidates:
-        response.status_code = 503
-        return {"error": "llm_not_configured", "detail": "No LLM models configured"}
-
-    persona = (req.persona or "Donald Trump").strip()
-    examples = EXAMPLE_SUFFIXES.get(persona, EXAMPLE_SUFFIXES["Donald Trump"])
-    system_prompt = (
-        f"{GLOBAL_COMEDY_PATCH}\n\n"
-        f"{PERSONA_PROMPTS.get(persona, PERSONA_PROMPTS['Donald Trump'])}\n\n"
-        f"{STYLE_RULE}{examples}\n{DASH_RULE}"
-    )
-    timeout = httpx.Timeout(connect=CONNECT_TIMEOUT, read=READ_TIMEOUT, write=WRITE_TIMEOUT, pool=POOL_TIMEOUT)
-
-    async def call_openrouter(model: str):
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": req.content},
-            ],
-            "temperature": TEMPERATURE,
-            "top_p": TOP_P,
-            "presence_penalty": PRESENCE_PENALTY,
-            "frequency_penalty": FREQUENCY_PENALTY,
-            "max_tokens": MAX_TOKENS,
-        }
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            return await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-
-    async def call_openai(model: str):
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": req.content},
-            ],
-            "temperature": TEMPERATURE,
-            "top_p": TOP_P,
-            "presence_penalty": PRESENCE_PENALTY,
-            "frequency_penalty": FREQUENCY_PENALTY,
-            "max_tokens": MAX_TOKENS,
-        }
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            return await client.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {OPENAI_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-
-    attempts = 0
-    delay = INITIAL_DELAY
-    last_error = None
-    used_model = model_candidates[0][1]
-    used_provider = model_candidates[0][0]
     start_time = time.time()
 
-    while attempts < MAX_ATTEMPTS:
-        attempts += 1
-        idx = min(attempts - 1, len(model_candidates) - 1)
-        used_provider, used_model = model_candidates[idx]
+    try:
+        data = await build_router_and_plan(req.chat_id, req.content, req.persona)
+        persona = data["persona"]
+        plan = data["plan"]
+        examples = EXAMPLE_SUFFIXES.get(persona, EXAMPLE_SUFFIXES["Donald Trump"])
 
-        attempt_start = time.time()
-        try:
-            if used_provider == "openai":
-                res = await call_openai(used_model)
-            else:
-                res = await call_openrouter(used_model)
-            elapsed_ms = int((time.time() - attempt_start) * 1000)
-            status = res.status_code
-            print(
-                f"llm_call chat_id={req.chat_id} attempt={attempts} provider={used_provider} "
-                f"model={used_model} status={status} latency_ms={elapsed_ms}"
-            )
-
-            if 200 <= status < 300:
-                data = res.json()
-                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                if not content:
-                    response.status_code = 503
-                    last_error = {"error": "empty_response", "detail": "LLM returned empty content"}
-                    # fall through to retry/backoff
-                else:
-                    response.status_code = 200
-                    return {
-                        "content": normalize_dashes(content),
-                        "model": used_model,
-                        "provider": used_provider,
-                        "latency_ms": int((time.time() - start_time) * 1000),
-                    }
-
-            if status == 429:
-                retry_after = res.headers.get("Retry-After")
-                response.status_code = 429
-                last_error = {"error": "rate_limited", "detail": "OpenRouter rate limited", "retry_after": retry_after}
-            elif status == 402:
-                response.status_code = 503
-                last_error = {"error": "payment_required", "detail": "OpenRouter payment required for model"}
-            elif status == 404:
-                response.status_code = 503
-                last_error = {"error": "model_not_found", "detail": f"OpenRouter model not found: {used_model}"}
-            elif status in (400, 401):
-                response.status_code = 503
-                last_error = {
-                    "error": "auth_or_bad_request",
-                    "detail": f"{used_provider} error {status} for model {used_model}",
-                }
-            elif status in (500, 502, 503, 504):
-                response.status_code = 503 if status in (503, 504) else 502
-                last_error = {"error": "upstream_unavailable", "detail": f"OpenRouter error {status}"}
-            else:
-                response.status_code = status
-                return {"error": "upstream_error", "detail": f"OpenRouter error {status}"}
-        except httpx.ReadTimeout:
-            print(f"llm_timeout chat_id={req.chat_id} attempt={attempts} model={used_model} stage=read")
-            response.status_code = 504
-            last_error = {"error": "upstream_timeout", "detail": "OpenRouter read timeout"}
-        except httpx.ConnectTimeout:
-            print(f"llm_timeout chat_id={req.chat_id} attempt={attempts} model={used_model} stage=connect")
-            response.status_code = 504
-            last_error = {"error": "upstream_timeout", "detail": "OpenRouter connect timeout"}
-        except httpx.RequestError as exc:
-            print(f"llm_error chat_id={req.chat_id} attempt={attempts} model={used_model} err={exc}")
-            response.status_code = 503
-            last_error = {"error": "upstream_unavailable", "detail": f"OpenRouter request error: {exc}"}
-
-        # backoff with jitter
-        retry_after = None
-        if last_error and isinstance(last_error, dict):
-            retry_after = last_error.get("retry_after")
-        if retry_after:
-            try:
-                await asyncio.sleep(float(retry_after))
-            except ValueError:
-                pass
-        else:
-            await asyncio.sleep(delay + random.random() * (0.2 * delay))
-            delay = min(delay * 2, MAX_DELAY)
-
-    if last_error:
-        response.status_code = 503
-        return {"error": "llm_busy", "detail": "LLM is busy, try later"}
-
-    response.status_code = 502
-    return {"error": "upstream_error", "detail": "Unknown LLM error"}
+        generator_system_prompt = (
+            f"{GLOBAL_COMEDY_PATCH}\n\n"
+            f"{PERSONA_PROMPTS[persona]}\n\n"
+            f"{STYLE_RULE}\n\n"
+            f"{GENERATOR_INTENT_BEHAVIOR}\n\n"
+            f"{examples}\n\n"
+            f"{GENERATOR_RULES_PROMPT}\n\n"
+            f"{DASH_RULE}"
+        )
+        plan_payload = plan.model_dump() if hasattr(plan, "model_dump") else plan.dict()
+        plan_json = json.dumps(plan_payload, ensure_ascii=True, indent=2)
+        generator_user_prompt = (
+            f'USER MESSAGE:\n"{req.content}"\n\n'
+            f"RESPONSE PLAN:\n{plan_json}\n\n"
+            "Generate final answer."
+        )
+        generator_messages = [
+            {"role": "system", "content": generator_system_prompt},
+            {"role": "user", "content": generator_user_prompt},
+        ]
+        generated_raw, used_provider, used_model = await run_stage_completion(
+            chat_id=req.chat_id,
+            stage="generator",
+            messages=generator_messages,
+            max_tokens=min(plan.final_max_tokens, 1000),
+            temperature=TEMPERATURE,
+            top_p=TOP_P,
+            presence_penalty=PRESENCE_PENALTY,
+            frequency_penalty=FREQUENCY_PENALTY,
+        )
+        content = post_process_response(generated_raw, plan)
+        response.status_code = 200
+        return {
+            "content": content,
+            "model": used_model,
+            "provider": used_provider,
+            "latency_ms": int((time.time() - start_time) * 1000),
+            "max_tokens": plan.final_max_tokens,
+        }
+    except LLMError as err:
+        response.status_code = err.status_code
+        return {"error": err.error, "detail": err.detail}
 
 
 def normalize_dashes(text: str) -> str:
