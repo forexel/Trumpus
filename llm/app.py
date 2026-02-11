@@ -30,13 +30,16 @@ WRITE_TIMEOUT = float(os.getenv("OPENROUTER_WRITE_TIMEOUT", "10"))
 POOL_TIMEOUT = float(os.getenv("OPENROUTER_POOL_TIMEOUT", "5"))
 
 MAX_ATTEMPTS = int(os.getenv("OPENROUTER_MAX_ATTEMPTS", "10"))
+MAX_ATTEMPTS_ROUTER = int(os.getenv("OPENROUTER_MAX_ATTEMPTS_ROUTER", "3"))
+MAX_ATTEMPTS_GENERATOR = int(os.getenv("OPENROUTER_MAX_ATTEMPTS_GENERATOR", "4"))
 INITIAL_DELAY = float(os.getenv("OPENROUTER_INITIAL_DELAY", "0.5"))
 MAX_DELAY = float(os.getenv("OPENROUTER_MAX_DELAY", "8"))
 MAX_TOKENS = min(int(os.getenv("LLM_MAX_TOKENS", "1000")), 1000)
-TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.95"))
+TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
 TOP_P = float(os.getenv("LLM_TOP_P", "0.95"))
 PRESENCE_PENALTY = float(os.getenv("LLM_PRESENCE_PENALTY", "0.4"))
 FREQUENCY_PENALTY = float(os.getenv("LLM_FREQUENCY_PENALTY", "0.2"))
+INCLUDE_EXAMPLES = os.getenv("LLM_INCLUDE_EXAMPLES", "0").strip() in {"1", "true", "yes"}
 
 ROUTER_SYSTEM_PROMPT = """You are a semantic conversation analyzer for a roleplay chat.
 
@@ -180,7 +183,7 @@ INTENTS = {
 }
 VERBOSITY_LEVELS = {"XS", "S", "M", "L", "XL"}
 USER_TONES = {"neutral", "friendly", "excited", "sad", "rude", "confused"}
-BASE_TOKENS_BY_VERBOSITY = {"XS": 80, "S": 160, "M": 320, "L": 560, "XL": 900}
+BASE_TOKENS_BY_VERBOSITY = {"XS": 60, "S": 110, "M": 180, "L": 320, "XL": 520}
 VERBOSITY_ORDER = ["XS", "S", "M", "L", "XL"]
 INITIATIVE_TYPES = {
     "reciprocal_question",
@@ -333,6 +336,30 @@ EXAMPLE_SUFFIXES = {
 DASH_RULE = "Avoid em dash (—) and en dash (–). Use a simple hyphen '-' if needed."
 
 app = FastAPI()
+HTTP_TIMEOUT = httpx.Timeout(connect=CONNECT_TIMEOUT, read=READ_TIMEOUT, write=WRITE_TIMEOUT, pool=POOL_TIMEOUT)
+HTTP_LIMITS = httpx.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=30.0)
+http_client: httpx.AsyncClient | None = None
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    global http_client
+    http_client = httpx.AsyncClient(timeout=HTTP_TIMEOUT, limits=HTTP_LIMITS)
+
+
+@app.on_event("shutdown")
+async def shutdown_event() -> None:
+    global http_client
+    if http_client is not None:
+        await http_client.aclose()
+        http_client = None
+
+
+def get_http_client() -> httpx.AsyncClient:
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=HTTP_TIMEOUT, limits=HTTP_LIMITS)
+    return http_client
 
 
 class RespondRequest(BaseModel):
@@ -654,19 +681,18 @@ async def provider_chat_completion(
         "frequency_penalty": frequency_penalty,
         "max_tokens": min(max_tokens, 1000),
     }
-    timeout = httpx.Timeout(connect=CONNECT_TIMEOUT, read=READ_TIMEOUT, write=WRITE_TIMEOUT, pool=POOL_TIMEOUT)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        if provider == "openai":
-            return await client.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
-                json=payload,
-            )
+    client = get_http_client()
+    if provider == "openai":
         return await client.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
             json=payload,
         )
+    return await client.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+        json=payload,
+    )
 
 
 def extract_content(data: dict[str, Any]) -> str:
@@ -688,13 +714,19 @@ async def run_stage_completion(
     if not candidates:
         raise LLMError(503, "llm_not_configured", f"No models configured for stage: {stage}")
 
+    stage_attempts = MAX_ATTEMPTS
+    if stage == "router":
+        stage_attempts = MAX_ATTEMPTS_ROUTER
+    elif stage == "generator":
+        stage_attempts = MAX_ATTEMPTS_GENERATOR
+
     attempts = 0
     delay = INITIAL_DELAY
     last_error = "unknown"
     used_provider = candidates[0][0]
     used_model = candidates[0][1]
 
-    while attempts < MAX_ATTEMPTS:
+    while attempts < stage_attempts:
         attempts += 1
         idx = min(attempts - 1, len(candidates) - 1)
         used_provider, used_model = candidates[idx]
@@ -744,7 +776,7 @@ async def run_stage_completion(
         await asyncio.sleep(delay + random.random() * (0.2 * delay))
         delay = min(delay * 2, MAX_DELAY)
 
-    raise LLMError(503, "llm_busy", f"Failed at stage={stage}, last_error={last_error}, model={used_model}")
+    raise LLMError(503, "llm_busy", f"Failed at stage={stage}, last_error={last_error}, model={used_model}, attempts={stage_attempts}")
 
 
 def router_fallback(user_text: str) -> RouterResult:
@@ -826,6 +858,19 @@ def is_personal_life_question(text: str) -> bool:
 def is_identity_question(text: str) -> bool:
     t = text.lower()
     return bool(re.search(r"are you ai|are you real|ты ии|ты реальный|кто ты", t))
+
+
+def should_use_fast_router_path(text: str) -> bool:
+    words = re.findall(r"\w+", text.strip())
+    if not words:
+        return True
+    if len(words) <= 6:
+        return True
+    if is_gibberish(text) or is_weather(text) or is_personal_life_question(text):
+        return True
+    if re.search(r"\b(hi|hello|hey|привет|спасибо|thanks|ок|okay|лол|lol)\b", text.lower()):
+        return True
+    return False
 
 
 def parse_router_output(raw: str, user_text: str) -> RouterResult:
@@ -1079,9 +1124,51 @@ def trim_to_token_cap(text: str, token_cap: int) -> str:
     return candidate or text[: token_cap * 4]
 
 
-def post_process_response(raw: str, plan: ResponsePlan) -> str:
+def build_personal_life_deflection(plan: ResponsePlan) -> str:
+    if plan.humor_mode == "off":
+        return (
+            "I do not discuss numbers - private life stays private. "
+            "What matters now: do you want to move on or try to win that relationship back?"
+        )
+    return (
+        "I do not publish numbers - private life is not a spreadsheet. "
+        "Let's just say the chapter was eventful. "
+        "Do you want to move on fast, or try one smart comeback?"
+    )
+
+
+def enforce_identity_disclosure_policy(text: str, user_text: str) -> str:
+    if is_identity_question(user_text):
+        return text
+    lowered = text.lower()
+    blocked_patterns = [
+        "i'm a parody voice",
+        "i am a parody voice",
+        "i'm a parody",
+        "i am a parody",
+        "i am an ai",
+        "i'm an ai",
+        "as an ai",
+    ]
+    if not any(p in lowered for p in blocked_patterns):
+        return text
+    cleaned = re.sub(
+        r"(?i)\b(i am|i'm)\s+(a\s+)?(parody|ai)([^.!?]*[.!?])",
+        "",
+        text,
+    ).strip()
+    return cleaned or "Let's keep this about you - what do you want to figure out next?"
+
+
+def post_process_response(raw: str, plan: ResponsePlan, user_text: str) -> str:
+    if plan.primary_intent == "personal_life_question":
+        text = build_personal_life_deflection(plan)
+        text = trim_to_token_cap(text, plan.final_max_tokens)
+        return text
+
     text = normalize_dashes(raw.strip())
-    sentence_max = {"XS": 1, "S": 3, "M": 7, "L": 9, "XL": 14}.get(plan.verbosity_level, 7)
+    text = enforce_identity_disclosure_policy(text, user_text)
+    sentence_max = {"XS": 1, "S": 2, "M": 5, "L": 7, "XL": 10}.get(plan.verbosity_level, 5)
     text = trim_to_sentence_limit(text, sentence_max)
     text = enforce_question_policy(text, plan.clarifying_question_required)
     text = enforce_clarifying_question(text, plan.clarifying_question_required, plan.clarifying_question)
@@ -1094,26 +1181,32 @@ async def build_router_and_plan(chat_id: str, content: str, persona_input: str |
     if persona not in PERSONA_PROMPTS:
         persona = "Donald Trump"
 
-    router_prompt = (
-        f'User message:\n"{content}"\n\n'
-        f"Conversation language hint: Russian.\n"
-        f"Classify and return JSON only."
-    )
-    router_messages = [
-        {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
-        {"role": "user", "content": router_prompt},
-    ]
-    router_raw, router_provider, router_model = await run_stage_completion(
-        chat_id=chat_id,
-        stage="router",
-        messages=router_messages,
-        max_tokens=320,
-        temperature=0.1,
-        top_p=1.0,
-        presence_penalty=0.0,
-        frequency_penalty=0.0,
-    )
-    router = parse_router_output(router_raw, content)
+    router_raw = "fast_path"
+    router_provider = "deterministic"
+    router_model = "local_rules"
+    if should_use_fast_router_path(content):
+        router = router_fallback(content)
+    else:
+        router_prompt = (
+            f'User message:\n"{content}"\n\n'
+            f"Conversation language hint: Russian.\n"
+            f"Classify and return JSON only."
+        )
+        router_messages = [
+            {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+            {"role": "user", "content": router_prompt},
+        ]
+        router_raw, router_provider, router_model = await run_stage_completion(
+            chat_id=chat_id,
+            stage="router",
+            messages=router_messages,
+            max_tokens=220,
+            temperature=0.1,
+            top_p=1.0,
+            presence_penalty=0.0,
+            frequency_penalty=0.0,
+        )
+        router = parse_router_output(router_raw, content)
     if is_gibberish(content):
         router.primary_intent = "low_info"
         router.secondary_intents = []
@@ -1197,7 +1290,7 @@ async def respond(req: RespondRequest, response: Response):
         data = await build_router_and_plan(req.chat_id, req.content, req.persona)
         persona = data["persona"]
         plan = data["plan"]
-        examples = EXAMPLE_SUFFIXES.get(persona, EXAMPLE_SUFFIXES["Donald Trump"])
+        examples = EXAMPLE_SUFFIXES.get(persona, EXAMPLE_SUFFIXES["Donald Trump"]) if INCLUDE_EXAMPLES else ""
 
         generator_system_prompt = (
             f"{GLOBAL_COMEDY_PATCH}\n\n"
@@ -1229,7 +1322,7 @@ async def respond(req: RespondRequest, response: Response):
             presence_penalty=PRESENCE_PENALTY,
             frequency_penalty=FREQUENCY_PENALTY,
         )
-        content = post_process_response(generated_raw, plan)
+        content = post_process_response(generated_raw, plan, req.content)
         response.status_code = 200
         return {
             "content": content,
