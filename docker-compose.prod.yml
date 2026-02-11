@@ -79,7 +79,6 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    container_name: trumpus_worker
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-trumpus}:${POSTGRES_PASSWORD:-trumpus}@db:5432/${POSTGRES_DB:-trumpus}?sslmode=disable
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
