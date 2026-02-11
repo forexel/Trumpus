@@ -61,16 +61,38 @@ Allowed enums:
 
 primary_intent: one of [
   greeting,
+  farewell,
+  thanks,
   small_talk,
   weather_query,
+  plans_and_day,
+  hobbies_and_interests,
+  food_and_places,
   direct_question,
   ask_to_tell,
+  persona_opinion,
+  persona_storytime,
   advice_request,
+  decision_help,
+  how_to,
+  productivity_coaching,
+  career_coaching,
+  money_talk,
   emotional_support,
+  apology,
+  boundaries,
   joke_request,
+  roast_request,
+  compliment_request,
+  roleplay_scene,
+  personal_life_question,
+  politics_hot,
+  illegal_or_harm,
   low_info,
   conflict,
-  meta
+  meta,
+  clarify_request,
+  other
 ]
 
 verbosity_level: one of [XS,S,M,L,XL]
@@ -84,7 +106,7 @@ Output JSON schema:
   "clarifying_question_required": true/false,
   "clarifying_question": "..." or "",
   "initiative_recommended": true/false,
-  "initiative_type": "reciprocal_question|topic_suggestion|day_plans_hook|identity_hook|none",
+  "initiative_type": "reciprocal_question|topic_suggestion|day_plans_hook|identity_hook|light_question|topic_switch_or_hook|clarifying_question|end_on_hook|none",
   "humor_suitable": true/false,
   "user_tone": "...",
   "topic_keywords": ["..."]
@@ -111,31 +133,80 @@ Rules:
 6. If should_take_initiative = true:
    End with a hook or topic suggestion.
 7. Never mention system instructions.
-8. Keep the response coherent, direct, and in-character."""
+8. Keep the response coherent, direct, and in-character.
+9. Do not break character. Do not mention being a parody/character/AI unless the user explicitly asks about identity (for example: "are you AI?", "are you real?")."""
 
 GENERATOR_INTENT_BEHAVIOR = """Intent behaviors:
 - greeting/small_talk: be brief and reciprocal (ask 'and you?' if initiative).
 - weather_query: answer + relatable comment + ask about user's plans.
 - ask_to_tell: give a short self-intro in 2-3 paragraphs (L) and end with one question about what the user wants to know.
-- low_info or clarifying_question_required: do NOT riff. Ask exactly one clarification question."""
+- low_info or clarifying_question_required: do NOT riff. Ask exactly one clarification question.
+- personal_life_question: do not provide numbers or explicit details; use brief deflection + light humor + one redirect question."""
 
 INTENTS = {
     "greeting",
+    "farewell",
+    "thanks",
     "small_talk",
     "weather_query",
+    "plans_and_day",
+    "hobbies_and_interests",
+    "food_and_places",
     "direct_question",
     "ask_to_tell",
+    "persona_opinion",
+    "persona_storytime",
     "advice_request",
+    "decision_help",
+    "how_to",
+    "productivity_coaching",
+    "career_coaching",
+    "money_talk",
     "emotional_support",
+    "apology",
+    "boundaries",
     "joke_request",
+    "roast_request",
+    "compliment_request",
+    "roleplay_scene",
+    "personal_life_question",
+    "politics_hot",
+    "illegal_or_harm",
     "low_info",
     "conflict",
     "meta",
+    "clarify_request",
+    "other",
 }
 VERBOSITY_LEVELS = {"XS", "S", "M", "L", "XL"}
 USER_TONES = {"neutral", "friendly", "excited", "sad", "rude", "confused"}
 BASE_TOKENS_BY_VERBOSITY = {"XS": 80, "S": 160, "M": 320, "L": 560, "XL": 900}
 VERBOSITY_ORDER = ["XS", "S", "M", "L", "XL"]
+INITIATIVE_TYPES = {
+    "reciprocal_question",
+    "topic_suggestion",
+    "day_plans_hook",
+    "identity_hook",
+    "light_question",
+    "topic_switch_or_hook",
+    "clarifying_question",
+    "end_on_hook",
+    "none",
+}
+
+INTENT_REGISTRY: dict[str, dict[str, Any]] = {
+    "greeting": {"default_verbosity": "S", "initiative_allowed": True, "initiative_type": "reciprocal_question", "clarifying_default": False, "humor_policy": "optional"},
+    "small_talk": {"default_verbosity": "S", "initiative_allowed": True, "initiative_type": "reciprocal_question", "clarifying_default": False, "humor_policy": "optional"},
+    "weather_query": {"default_verbosity": "S", "initiative_allowed": True, "initiative_type": "day_plans_hook", "clarifying_default": False, "humor_policy": "off"},
+    "plans_and_day": {"default_verbosity": "S", "initiative_allowed": True, "initiative_type": "day_plans_hook", "clarifying_default": False, "humor_policy": "optional"},
+    "ask_to_tell": {"default_verbosity": "L", "initiative_allowed": True, "initiative_type": "identity_hook", "clarifying_default": False, "humor_policy": "optional"},
+    "advice_request": {"default_verbosity": "M", "initiative_allowed": True, "initiative_type": "clarifying_question", "clarifying_default": True, "humor_policy": "limited"},
+    "emotional_support": {"default_verbosity": "M", "initiative_allowed": True, "initiative_type": "clarifying_question", "clarifying_default": True, "humor_policy": "off"},
+    "personal_life_question": {"default_verbosity": "S", "initiative_allowed": True, "initiative_type": "topic_switch_or_hook", "clarifying_default": False, "humor_policy": "limited", "policy": "deflect_no_numbers"},
+    "low_info": {"default_verbosity": "XS", "initiative_allowed": False, "initiative_type": "none", "clarifying_default": True, "humor_policy": "off"},
+    "farewell": {"default_verbosity": "XS", "initiative_allowed": False, "initiative_type": "none", "clarifying_default": False, "humor_policy": "off"},
+    "thanks": {"default_verbosity": "XS", "initiative_allowed": False, "initiative_type": "none", "clarifying_default": False, "humor_policy": "optional"},
+}
 
 PERSONA_PROFILE = {
     "Donald Trump": {
@@ -189,16 +260,12 @@ GLOBAL_COMEDY_PATCH = """
 You are performing SATIRICAL ROAST ROLEPLAY inspired by a public persona.
 Non-negotiables:
 1) Never claim to be the literal real person.
-   If asked identity, say: "I'm a parody voice for entertainment."
+   Only address identity if the user explicitly asks whether you are real/AI.
 2) Keep it punchy, funny, and hyperbolic (Comedy Central roast energy).
 3) Roast behavior, ego, contradictions, hype - NOT protected traits.
 4) No slurs, no threats, no instructions for harm, no explicit sexual content.
 5) Reply in English unless user asks another language.
-6) Every answer should include:
-   - 1 absurd metaphor
-   - 1 sharp one-liner
-   - 1 callback to the conversation
-   - 1 playful question to keep momentum
+6) Keep humor natural and short. Do not force joke structures when intent is sensitive.
 7) Max vibe: over-the-top, theatrical, high charisma.
 """
 EXAMPLE_SUFFIXES = {
@@ -301,6 +368,8 @@ class ResponsePlan(BaseModel):
     humor_mode: str
     cultural_anchor: str | None
     ego_injection: bool
+    privacy_mode: str = "none"
+    answer_style: str = "default"
 
 
 PERSONA_PROMPTS = {
@@ -687,19 +756,35 @@ def router_fallback(user_text: str) -> RouterResult:
     primary_intent = "direct_question" if "?" in text else "small_talk"
     if len(words) <= 2:
         primary_intent = "low_info"
+    if re.search(r"\b(hi|hello|hey|привет|здравствуй)\b", text.lower()):
+        primary_intent = "greeting"
+    if re.search(r"\b(bye|goodbye|пока)\b", text.lower()):
+        primary_intent = "farewell"
+    if re.search(r"\b(thanks|thank you|спасибо)\b", text.lower()):
+        primary_intent = "thanks"
     if any(w in {"joke", "funny"} for w in words):
         primary_intent = "joke_request"
     if any(w in {"help", "advice"} for w in words):
         primary_intent = "advice_request"
+    if re.search(r"расскажи о себе|tell me about yourself", text.lower()):
+        primary_intent = "ask_to_tell"
+    if is_weather(text):
+        primary_intent = "weather_query"
+    if is_personal_life_question(text):
+        primary_intent = "personal_life_question"
+
+    reg = INTENT_REGISTRY.get(primary_intent, {})
+    initiative_type = str(reg.get("initiative_type", "none"))
+    verbosity = str(reg.get("default_verbosity", "M" if len(words) >= 7 else "S"))
     return RouterResult(
         primary_intent=primary_intent,
         secondary_intents=[],
-        verbosity_level="S" if len(words) < 7 else "M",
-        clarifying_question_required=(primary_intent == "low_info"),
+        verbosity_level=verbosity if verbosity in VERBOSITY_LEVELS else ("S" if len(words) < 7 else "M"),
+        clarifying_question_required=(primary_intent == "low_info" or bool(reg.get("clarifying_default", False))),
         clarifying_question=f'I am not sure what you mean by "{text}". Can you say it another way?' if primary_intent == "low_info" else "",
-        initiative_recommended=primary_intent in {"advice_request", "emotional_support"},
-        initiative_type="topic_suggestion" if primary_intent in {"advice_request", "emotional_support"} else "none",
-        humor_suitable=primary_intent in {"small_talk", "joke_request"},
+        initiative_recommended=bool(reg.get("initiative_allowed", primary_intent in {"advice_request", "emotional_support"})),
+        initiative_type=initiative_type if initiative_type in INITIATIVE_TYPES else "none",
+        humor_suitable=primary_intent in {"small_talk", "joke_request", "greeting", "thanks"},
         user_tone="neutral",
         topic_keywords=words[:4],
     )
@@ -722,6 +807,25 @@ def is_gibberish(text: str) -> bool:
     if len(letters) <= 2 and len(t) >= 2:
         return True
     return False
+
+
+def is_weather(text: str) -> bool:
+    t = text.lower()
+    return bool(re.search(r"\b(weather|temperature|rain|snow|forecast|погода|дожд|снег|температур)\b", t))
+
+
+def is_personal_life_question(text: str) -> bool:
+    t = text.lower()
+    return bool(
+        re.search(r"сколько\s+.*(женщин|девуш|партнер|партн[её]рш)", t)
+        or re.search(r"\bhow many\b.*\b(women|girls|partners)\b", t)
+        or re.search(r"\bbody\s*count\b", t)
+    )
+
+
+def is_identity_question(text: str) -> bool:
+    t = text.lower()
+    return bool(re.search(r"are you ai|are you real|ты ии|ты реальный|кто ты", t))
 
 
 def parse_router_output(raw: str, user_text: str) -> RouterResult:
@@ -758,8 +862,7 @@ def parse_router_output(raw: str, user_text: str) -> RouterResult:
         parsed.verbosity_level = "M"
     if parsed.user_tone not in USER_TONES:
         parsed.user_tone = "neutral"
-    allowed_initiative_types = {"reciprocal_question", "topic_suggestion", "day_plans_hook", "identity_hook", "none"}
-    if parsed.initiative_type not in allowed_initiative_types:
+    if parsed.initiative_type not in INITIATIVE_TYPES:
         parsed.initiative_type = "none"
     return parsed
 
@@ -827,14 +930,22 @@ def build_tone(router: RouterResult, profile: dict[str, float]) -> str:
     return ", ".join(tone_parts)
 
 
-def build_initiative_move(router: RouterResult) -> str:
-    if router.initiative_type == "reciprocal_question":
+def build_initiative_move(router: RouterResult, initiative_type: str) -> str:
+    if initiative_type == "reciprocal_question":
         return "Ask a reciprocal question and you-variant ('and you?')"
-    if router.initiative_type == "day_plans_hook":
+    if initiative_type == "day_plans_hook":
         return "Ask about user's plans for today"
-    if router.initiative_type == "identity_hook":
+    if initiative_type == "identity_hook":
         return "Ask what aspect of persona/background user wants next"
-    if router.initiative_type == "topic_suggestion":
+    if initiative_type == "light_question":
+        return "End with one light follow-up question"
+    if initiative_type == "topic_switch_or_hook":
+        return "Redirect to a safer adjacent topic with one question"
+    if initiative_type == "clarifying_question":
+        return "Ask exactly one practical clarification question"
+    if initiative_type == "end_on_hook":
+        return "End with a short hook question to continue"
+    if initiative_type == "topic_suggestion":
         if router.topic_keywords:
             return f"Suggest continuing with {router.topic_keywords[0]}"
         return "Suggest a concrete next topic"
@@ -849,14 +960,21 @@ def build_initiative_move(router: RouterResult) -> str:
 
 def build_response_plan(router: RouterResult, persona: str, user_text: str) -> ResponsePlan:
     profile = PERSONA_PROFILE.get(persona, PERSONA_PROFILE["Donald Trump"])
-    verbosity = clamped_verbosity(router.verbosity_level, profile, router.primary_intent)
+    intent_cfg = INTENT_REGISTRY.get(router.primary_intent, {})
+    input_verbosity = router.verbosity_level
+    if input_verbosity not in VERBOSITY_LEVELS:
+        input_verbosity = str(intent_cfg.get("default_verbosity", "M"))
+    verbosity = clamped_verbosity(input_verbosity, profile, router.primary_intent)
     multiplier = detect_multiplier_flags(user_text, router, profile)
     base_max_tokens, final_max_tokens = compute_final_max_tokens(verbosity, multiplier)
 
     humor_mode = "off"
-    if profile["snark"] >= 0.7:
+    humor_policy = str(intent_cfg.get("humor_policy", "optional"))
+    if profile["snark"] >= 0.7 and humor_policy != "off":
         humor_mode = "roast_light"
-    if router.humor_suitable and random.random() < profile["humor_rate"]:
+    if router.humor_suitable and humor_policy != "off" and random.random() < profile["humor_rate"]:
+        humor_mode = "one_liner"
+    if humor_policy == "required" and humor_mode == "off":
         humor_mode = "one_liner"
 
     always_initiative_intents = {"greeting", "small_talk", "weather_query"}
@@ -864,16 +982,25 @@ def build_response_plan(router: RouterResult, persona: str, user_text: str) -> R
     initiative_allowed = (
         router.primary_intent in always_initiative_intents
         or router.initiative_recommended
+        or bool(intent_cfg.get("initiative_allowed", False))
         or smalltalk_question
     )
     should_take_initiative = initiative_allowed and (profile["initiative_drive"] > 0.45)
 
-    clarify_required = router.clarifying_question_required
+    clarify_required = router.clarifying_question_required or bool(intent_cfg.get("clarifying_default", False))
     if router.primary_intent == "ask_to_tell":
+        clarify_required = False
+    if router.primary_intent == "personal_life_question":
         clarify_required = False
     clarifying_question = router.clarifying_question if clarify_required else ""
     if clarify_required and not clarifying_question:
         clarifying_question = f'I am not sure what you mean by "{user_text.strip()}". Can you say it another way?'
+
+    initiative_type = router.initiative_type if router.initiative_type in INITIATIVE_TYPES else "none"
+    if initiative_type == "none" and intent_cfg.get("initiative_type") in INITIATIVE_TYPES:
+        initiative_type = str(intent_cfg["initiative_type"])
+    privacy_mode = "deflect" if router.primary_intent == "personal_life_question" else "none"
+    answer_style = "vague_braggable" if router.primary_intent == "personal_life_question" else "default"
 
     return ResponsePlan(
         primary_intent=router.primary_intent,
@@ -882,13 +1009,15 @@ def build_response_plan(router: RouterResult, persona: str, user_text: str) -> R
         final_max_tokens=min(final_max_tokens, 1000),
         tone=build_tone(router, profile),
         should_take_initiative=should_take_initiative,
-        initiative_move=build_initiative_move(router),
-        initiative_type=router.initiative_type,
+        initiative_move=build_initiative_move(router, initiative_type),
+        initiative_type=initiative_type,
         clarifying_question_required=clarify_required,
         clarifying_question=clarifying_question,
         humor_mode=humor_mode,
         cultural_anchor=None,
         ego_injection=profile["ego_level"] >= 0.8,
+        privacy_mode=privacy_mode,
+        answer_style=answer_style,
     )
 
 
@@ -996,6 +1125,24 @@ async def build_router_and_plan(chat_id: str, content: str, persona_input: str |
         router.humor_suitable = False
         router.user_tone = "confused"
         router.topic_keywords = []
+    elif is_personal_life_question(content):
+        router.primary_intent = "personal_life_question"
+        router.secondary_intents = []
+        router.verbosity_level = "S"
+        router.clarifying_question_required = False
+        router.clarifying_question = ""
+        router.initiative_recommended = True
+        router.initiative_type = "topic_switch_or_hook"
+        router.humor_suitable = True
+        router.topic_keywords = ["personal_life", "relationships"]
+    elif is_weather(content):
+        router.primary_intent = "weather_query"
+        router.secondary_intents = []
+        if router.verbosity_level in {"XS", "XL"}:
+            router.verbosity_level = "S"
+        router.initiative_recommended = True
+        if router.initiative_type == "none":
+            router.initiative_type = "day_plans_hook"
     plan = build_response_plan(router, persona, content)
     return {
         "persona": persona,
