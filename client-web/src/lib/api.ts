@@ -256,6 +256,7 @@ export function getPersonaPrompt(persona?: string) {
 
 
 const LAST_CHAT_KEY = 'last_chat_id'
+const CHAT_SEEN_MAP_KEY = 'chat_seen_map_v1'
 const CLIENT_ID_KEY = 'client_id'
 const CLIENT_EMAIL_KEY = 'client_email'
 const ACCESS_TOKEN_KEY = 'access_token'
@@ -518,6 +519,28 @@ export function getLastChatId() {
 
 export function setLastChatId(chatId: string) {
   localStorage.setItem(LAST_CHAT_KEY, chatId)
+}
+
+function readChatSeenMap(): Record<string, number> {
+  return readCachedJSON<Record<string, number>>(CHAT_SEEN_MAP_KEY, {})
+}
+
+function writeChatSeenMap(next: Record<string, number>) {
+  writeCachedJSON(CHAT_SEEN_MAP_KEY, next)
+}
+
+export function getChatSeenAt(chatId: string): number {
+  if (!chatId) return 0
+  const map = readChatSeenMap()
+  const raw = map[chatId]
+  return Number.isFinite(raw) ? raw : 0
+}
+
+export function markChatSeen(chatId: string, seenAt: number = Date.now()) {
+  if (!chatId) return
+  const map = readChatSeenMap()
+  map[chatId] = Math.max(0, Math.floor(seenAt))
+  writeChatSeenMap(map)
 }
 
 export async function getSession() {

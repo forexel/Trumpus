@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { fetchChats, fetchMessages, getClientId, getWsBase, sendMessage, updateChatTitle, setLastChatId, Message, ChatSummary } from '../lib/api'
+import { fetchChats, fetchMessages, getClientId, getWsBase, markChatSeen, sendMessage, updateChatTitle, setLastChatId, Message, ChatSummary } from '../lib/api'
 import { useTheme } from '../lib/useTheme'
 import { PERSONAS } from './NewChatPage'
 import eagleIcon from '../assets/eagle.png'
@@ -70,7 +70,10 @@ export default function ChatDetailPage() {
       navigate('/login')
       return
     }
-    if (chatId) setLastChatId(chatId)
+    if (chatId) {
+      setLastChatId(chatId)
+      markChatSeen(chatId)
+    }
     setLoading(true)
     Promise.all([fetchChats(clientId), fetchMessages(chatId)])
       .then(([chatList, msgList]) => {
@@ -134,6 +137,7 @@ export default function ChatDetailPage() {
           return [...prev, incoming]
         })
         if (incoming.sender === 'admin') {
+          markChatSeen(chatId)
           setTyping(false)
           pendingAIRef.current = false
         }

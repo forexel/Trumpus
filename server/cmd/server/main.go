@@ -159,6 +159,92 @@ func runtimeHistoryMax() int {
 	return 24
 }
 
+func llmBusyFallback(persona string) string {
+	switch strings.TrimSpace(persona) {
+	case "Donald Trump":
+		return "Quick break - I have to step away. Let's continue later, and we'll make it tremendous."
+	case "Elon Musk":
+		return "Quick break - stepping away for now. Let's continue later."
+	case "Kanye West":
+		return "Quick break - I need to step away now. Let's continue later and keep the vision going."
+	case "Richard Nixon":
+		return "I need to step away for now. We can continue this conversation later."
+	case "Andrew Jackson":
+		return "I need to step away now. We continue later."
+	case "Marjorie Taylor Greene":
+		return "Quick break - I need to step away. Let's continue later."
+	case "Tucker Carlson":
+		return "I need to step away for now. Let's continue this later."
+	case "Lyndon B. Johnson":
+		return "I need to step away now. Let's pick this up later and keep moving."
+	case "Mark Zuckerberg":
+		return "Quick break - stepping away for now. Let's continue later."
+	case "Jeffrey Epstein":
+		return "I need to step away for now. Let's continue later."
+	default:
+		return "I need to step away now - let's continue this conversation later."
+	}
+}
+
+func deferredRetryMaxAttempts() int {
+	raw := strings.TrimSpace(os.Getenv("LLM_DEFERRED_RETRY_MAX"))
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		if n > 8 {
+			return 8
+		}
+		return n
+	}
+	return 3
+}
+
+func deferredRetryDelay() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("LLM_DEFERRED_RETRY_DELAY_SEC"))
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		if n > 120 {
+			n = 120
+		}
+		return time.Duration(n) * time.Second
+	}
+	return 12 * time.Second
+}
+
+func enqueueLLMJobAfter(delay time.Duration, job LLMJob) {
+	if delay <= 0 {
+		_ = enqueueLLMJob(job)
+		return
+	}
+	go func(j LLMJob, d time.Duration) {
+		time.Sleep(d)
+		if err := enqueueLLMJob(j); err != nil {
+			log.Printf("llm_deferred_enqueue_error req_id=%s chat_id=%s err=%v", j.RequestID, j.ChatID, err)
+		}
+	}(job, delay)
+}
+
+func isLLMPlaceholderResponse(content string) bool {
+	c := strings.TrimSpace(content)
+	if c == "" {
+		return true
+	}
+	if c == "LLM is busy, try later." || c == "LLM request failed." {
+		return true
+	}
+	if strings.EqualFold(c, llmBusyFallback("Donald Trump")) ||
+		strings.EqualFold(c, llmBusyFallback("Elon Musk")) ||
+		strings.EqualFold(c, llmBusyFallback("Kanye West")) ||
+		strings.EqualFold(c, llmBusyFallback("Richard Nixon")) ||
+		strings.EqualFold(c, llmBusyFallback("Andrew Jackson")) ||
+		strings.EqualFold(c, llmBusyFallback("Marjorie Taylor Greene")) ||
+		strings.EqualFold(c, llmBusyFallback("Tucker Carlson")) ||
+		strings.EqualFold(c, llmBusyFallback("Lyndon B. Johnson")) ||
+		strings.EqualFold(c, llmBusyFallback("Mark Zuckerberg")) ||
+		strings.EqualFold(c, llmBusyFallback("Jeffrey Epstein")) ||
+		strings.EqualFold(c, llmBusyFallback("")) {
+		return true
+	}
+	return false
+}
+
 func (h *runtimeHistoryStore) get(chatID string, limit int) []llmHistoryItem {
 	if chatID == "" {
 		return nil
@@ -183,7 +269,7 @@ func (h *runtimeHistoryStore) append(chatID, sender, content string) {
 		return
 	}
 	content = strings.TrimSpace(content)
-	if content == "" || content == "LLM is busy, try later." {
+	if isLLMPlaceholderResponse(content) {
 		return
 	}
 	if sender != "client" && sender != "admin" {
@@ -217,7 +303,7 @@ func (h *runtimeHistoryStore) setFromMessages(chatID string, msgs []*Message, li
 			continue
 		}
 		content := strings.TrimSpace(m.Content)
-		if content == "" || content == "LLM is busy, try later." {
+		if isLLMPlaceholderResponse(content) {
 			continue
 		}
 		if m.Sender != "client" && m.Sender != "admin" {
@@ -1034,7 +1120,7 @@ func appendHistoryCache(chatID, sender, content string) {
 		return
 	}
 	content = strings.TrimSpace(content)
-	if content == "" || content == "LLM is busy, try later." {
+	if isLLMPlaceholderResponse(content) {
 		return
 	}
 	if sender != "client" && sender != "admin" {
@@ -1199,7 +1285,7 @@ func buildTopicContext(chatID, currentContent string, now time.Time) []llmHistor
 			continue
 		}
 		content := strings.TrimSpace(msg.Content)
-		if content == "" || content == "LLM is busy, try later." {
+		if isLLMPlaceholderResponse(content) {
 			continue
 		}
 		out = append(out, llmHistoryItem{
@@ -2266,7 +2352,7 @@ func processLLMJob(job LLMJob) error {
 		if err != nil || strings.TrimSpace(resp) == "" {
 			log.Printf("llm_error_final req_id=%s chat_id=%s status=%d err=%v body=%s", job.RequestID, job.ChatID, status, err, body)
 			if isRetriableLLMFailure(status, err) {
-				resp = "LLM is busy, try later."
+				resp = llmBusyFallback(job.Persona)
 				return resp, status, body, err, true
 			}
 			resp = "LLM request failed."
@@ -2276,15 +2362,57 @@ func processLLMJob(job LLMJob) error {
 	}
 
 	resp, _, _, _, retriableFailure := callOnce()
+	if retriableFailure {
+		switch job.Source {
+		case "client_send":
+			if strings.TrimSpace(job.ReplaceID) == "" {
+				placeholderText := llmBusyFallback(job.Persona)
+				placeholder, err := store.insertMessage(job.ChatID, "admin", placeholderText, time.Now())
+				if err == nil && placeholder != nil {
+					hist.append(job.ChatID, "admin", placeholder.Content)
+					appendHistoryCache(job.ChatID, "admin", placeholder.Content)
+					_ = store.updateChatLastMessage(job.ChatID, placeholder.CreatedAt)
+					publishEvent(ChatEvent{
+						Type:           "message_created",
+						ChatID:         job.ChatID,
+						ClientID:       chat.ClientID,
+						Message:        placeholder,
+						UnreadForAdmin: chat.UnreadForAdmin,
+						LastMessageAt:  placeholder.CreatedAt.Format(time.RFC3339),
+					})
+					next := job
+					next.Source = "deferred_retry"
+					next.ReplaceID = placeholder.ID
+					next.Attempts++
+					if next.Attempts <= deferredRetryMaxAttempts() {
+						enqueueLLMJobAfter(deferredRetryDelay(), next)
+					}
+				}
+				return nil
+			}
+		case "deferred_retry":
+			next := job
+			next.Attempts++
+			if next.Attempts <= deferredRetryMaxAttempts() {
+				enqueueLLMJobAfter(deferredRetryDelay(), next)
+			}
+			return nil
+		}
+	}
+
 	// Admin resend should make a real retry cycle, not silently keep the previous busy result.
-	if job.Source == "admin_resend" && retriableFailure && strings.TrimSpace(resp) == "LLM is busy, try later." {
-		for i := 0; i < 2 && strings.TrimSpace(resp) == "LLM is busy, try later."; i++ {
+	if job.Source == "admin_resend" && retriableFailure {
+		for i := 0; i < 2 && retriableFailure; i++ {
 			time.Sleep(2 * time.Second)
 			resp, _, _, _, retriableFailure = callOnce()
 			if !retriableFailure {
 				break
 			}
 		}
+	}
+	if job.Source == "deferred_retry" && strings.TrimSpace(resp) != "" {
+		asked := firstLine(strings.TrimSpace(job.Content), 140)
+		resp = fmt.Sprintf("You asked: \"%s\" Earlier I had to step away. %s", asked, resp)
 	}
 
 	if last, err := store.getLastAdminMessage(job.ChatID); err == nil && last != nil {
@@ -2362,7 +2490,7 @@ func buildLLMHistory(chatID string, limit int) []llmHistoryItem {
 			continue
 		}
 		content := strings.TrimSpace(m.Content)
-		if content == "" || content == "LLM is busy, try later." {
+		if isLLMPlaceholderResponse(content) {
 			continue
 		}
 		out = append(out, llmHistoryItem{
@@ -2447,7 +2575,7 @@ func buildMemoryFromMessages(msgs []*Message) llmMemory {
 			continue
 		}
 		content := strings.TrimSpace(m.Content)
-		if content == "" || content == "LLM is busy, try later." {
+		if isLLMPlaceholderResponse(content) {
 			continue
 		}
 		if m.Sender == "client" {

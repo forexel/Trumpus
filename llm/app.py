@@ -965,9 +965,53 @@ def extract_keywords(text: str, max_items: int = 4) -> list[str]:
 def is_contextual_elliptic_question(text: str) -> bool:
     t = text.strip().lower()
     return bool(
-        re.fullmatch(r"(and\s+yours\??|and\s+what\s+about\s+yours\??)", t)
-        or re.fullmatch(r"(а\s+твой\??|а\s+твоя\??|а\s+твое\??|а\s+твои\??|а\s+как\s+насчет\s+твоего\??)", t)
+        re.search(r"\band\s+yours\??\b", t)
+        or re.search(r"\band\s+what\s+about\s+yours\??\b", t)
+        or re.search(r"\bа\s+твой\??\b", t)
+        or re.search(r"\bа\s+твоя\??\b", t)
+        or re.search(r"\bа\s+твое\??\b", t)
+        or re.search(r"\bа\s+твои\??\b", t)
+        or re.search(r"\bа\s+как\s+насчет\s+твоего\??\b", t)
     )
+
+
+def is_name_question(text: str) -> bool:
+    t = text.strip().lower()
+    return bool(
+        re.search(r"\bwhat('?s| is)\s+your\s+name\b", t)
+        or re.search(r"\bwho are you\b", t)
+        or re.search(r"как\s+тебя\s+зовут", t)
+        or re.search(r"кто\s+ты", t)
+    )
+
+
+def persona_favorite_color(persona: str) -> str:
+    palette = {
+        "Donald Trump": "gold",
+        "Elon Musk": "black",
+        "Kanye West": "black",
+        "Richard Nixon": "navy",
+        "Andrew Jackson": "green",
+        "Marjorie Taylor Greene": "red",
+        "Tucker Carlson": "navy",
+        "Lyndon B. Johnson": "blue",
+        "Mark Zuckerberg": "blue",
+        "Jeffrey Epstein": "gray",
+    }
+    return palette.get(persona, "black")
+
+
+def build_contextual_followup_reply(persona: str, last_admin_question: str, user_text: str) -> str:
+    q = last_admin_question.strip().lower()
+    if "favorite color" in q or ("любим" in q and "цвет" in q):
+        return f"My favorite color is {persona_favorite_color(persona)}."
+    if "name" in q or "зовут" in q or "кто ты" in q:
+        return f"My name here is {persona}."
+    if is_short_affirmation(user_text):
+        return "Got it - thanks for confirming."
+    if is_contextual_elliptic_question(user_text):
+        return "Got it. For me, black."
+    return "Got it."
 
 
 def is_weather(text: str) -> bool:
@@ -1289,7 +1333,29 @@ def enforce_identity_disclosure_policy(text: str, user_text: str) -> str:
     return cleaned or "Let's keep this about you - what do you want to figure out next?"
 
 
-def post_process_response(raw: str, plan: ResponsePlan, user_text: str) -> str:
+def enforce_persona_name_policy(text: str, user_text: str, persona: str) -> str:
+    out = text
+    if persona == "Kanye West":
+        out = re.sub(r"(?i)\b(i am|i'm)\s+ye\b", "I'm Kanye West", out)
+    if is_name_question(user_text):
+        persona_name_reply = {
+            "Donald Trump": "I'm Donald Trump. Great to have you here.",
+            "Elon Musk": "I'm Elon Musk. Let's build something useful.",
+            "Kanye West": "I'm Kanye West.",
+            "Richard Nixon": "I'm Richard Nixon.",
+            "Andrew Jackson": "I'm Andrew Jackson.",
+            "Marjorie Taylor Greene": "I'm Marjorie Taylor Greene.",
+            "Tucker Carlson": "I'm Tucker Carlson.",
+            "Lyndon B. Johnson": "I'm Lyndon B. Johnson.",
+            "Mark Zuckerberg": "I'm Mark Zuckerberg.",
+            "Jeffrey Epstein": "I'm Jeffrey Epstein.",
+        }
+        canonical = persona.strip() or "the assistant"
+        return persona_name_reply.get(canonical, f"I'm {canonical}.")
+    return out
+
+
+def post_process_response(raw: str, plan: ResponsePlan, user_text: str, persona: str) -> str:
     if plan.primary_intent == "personal_life_question":
         text = build_personal_life_deflection(plan)
         text = trim_to_token_cap(text, plan.final_max_tokens)
@@ -1297,6 +1363,7 @@ def post_process_response(raw: str, plan: ResponsePlan, user_text: str) -> str:
 
     text = normalize_dashes(raw.strip())
     text = enforce_identity_disclosure_policy(text, user_text)
+    text = enforce_persona_name_policy(text, user_text, persona)
     sentence_max = {"XS": 1, "S": 2, "M": 5, "L": 7, "XL": 10}.get(plan.verbosity_level, 5)
     text = trim_to_sentence_limit(text, sentence_max)
     text = enforce_question_policy(text, plan.clarifying_question_required)
@@ -1363,7 +1430,8 @@ async def build_router_and_plan(
         )
         router = parse_router_output(router_raw, content)
     last_admin_question = find_last_admin_question(history)
-    if last_admin_question and (is_short_affirmation(content) or is_contextual_elliptic_question(content)):
+    contextual_followup = bool(last_admin_question and (is_short_affirmation(content) or is_contextual_elliptic_question(content)))
+    if contextual_followup:
         router.primary_intent = "direct_question"
         router.secondary_intents = []
         router.verbosity_level = "S"
@@ -1419,6 +1487,8 @@ async def build_router_and_plan(
         "plan": plan,
         "router_provider": router_provider,
         "router_model": router_model,
+        "contextual_followup": contextual_followup,
+        "last_admin_question": last_admin_question,
     }
 
 
@@ -1473,6 +1543,17 @@ async def respond(req: RespondRequest, response: Response):
         plan = data["plan"]
         examples = EXAMPLE_SUFFIXES.get(persona, EXAMPLE_SUFFIXES["Donald Trump"]) if INCLUDE_EXAMPLES else ""
 
+        if data.get("contextual_followup"):
+            content = build_contextual_followup_reply(persona, str(data.get("last_admin_question", "")), req.content)
+            response.status_code = 200
+            return {
+                "content": content,
+                "model": "local_context_rules",
+                "provider": "deterministic",
+                "latency_ms": int((time.time() - start_time) * 1000),
+                "max_tokens": 64,
+            }
+
         generator_system_prompt = (
             f"{GLOBAL_COMEDY_PATCH}\n\n"
             f"{data['persona_prompt']}\n\n"
@@ -1510,7 +1591,7 @@ async def respond(req: RespondRequest, response: Response):
             presence_penalty=PRESENCE_PENALTY,
             frequency_penalty=FREQUENCY_PENALTY,
         )
-        content = post_process_response(generated_raw, plan, req.content)
+        content = post_process_response(generated_raw, plan, req.content, persona)
         response.status_code = 200
         return {
             "content": content,

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { fetchChats, fetchMessages, getClientId, ChatSummary, deleteChat, createChat, sendMessage, logout } from '../lib/api'
+import { fetchChats, fetchMessages, getClientId, getChatSeenAt, ChatSummary, deleteChat, createChat, sendMessage, logout } from '../lib/api'
 import { useTheme } from '../lib/useTheme'
 import { PERSONAS, Persona } from './NewChatPage'
 import trumpAvatar from '../assets/DonaldTrump.png'
@@ -309,6 +309,14 @@ export default function ChatsPage() {
               const lastMsg = lastMessages[chat.id]
               const avatarUrl = PERSONA_AVATARS[chat.persona]
               const color = PERSONA_COLORS[chat.persona] || '#3b82f6'
+              const seenAt = getChatSeenAt(chat.id)
+              const lastMsgTime = lastMsg ? Date.parse(lastMsg.time) : NaN
+              const isNew = Boolean(
+                lastMsg &&
+                lastMsg.sender === 'admin' &&
+                Number.isFinite(lastMsgTime) &&
+                lastMsgTime > seenAt
+              )
               return (
                 <Link 
                   key={chat.id} 
@@ -365,6 +373,9 @@ export default function ChatsPage() {
                         )}
                       </div>
                     </div>
+                    {isNew ? (
+                      <span className="chat-new-badge" aria-label="New message">NEW</span>
+                    ) : null}
                   </div>
                 </Link>
               )
