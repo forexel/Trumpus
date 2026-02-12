@@ -15,8 +15,11 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
   const [messages, setMessages] = useState<Message[]>([])
   const [content, setContent] = useState('')
   const [resendingId, setResendingId] = useState('')
+  const [resendTargetId, setResendTargetId] = useState('')
+  const [resendTempId, setResendTempId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
   const markdownComponents = useMemo(
     () => ({
       p: ({ children }: { children: React.ReactNode }) => <p className="msg-text">{children}</p>,
@@ -64,9 +67,17 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
         if (!incoming) return
         if (payload?.type === 'message_created') {
           setMessages((prev) => {
+            if (resendTempId && incoming.sender === 'admin') {
+              return prev.map((m) => (m.id === resendTempId ? incoming : m))
+            }
             if (prev.some((m) => m.id === incoming.id)) return prev
             return [...prev, incoming]
           })
+          if (resendingId && incoming.sender === 'admin') {
+            setResendingId('')
+            setResendTargetId('')
+            setResendTempId('')
+          }
           if (incoming.sender === 'client') {
             markChatRead(chatId)
           }
@@ -74,6 +85,11 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
         }
         if (payload?.type === 'message_updated') {
           setMessages((prev) => prev.map((m) => (m.id === incoming.id ? incoming : m)))
+          if (resendTargetId && incoming.id === resendTargetId) {
+            setResendingId('')
+            setResendTargetId('')
+            setResendTempId('')
+          }
         }
       } catch {
         // ignore malformed events
@@ -82,29 +98,88 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
     return () => {
       ws.close()
     }
-  }, [chatId])
+  }, [chatId, resendTempId, resendTargetId, resendingId])
 
   async function onSend() {
     if (!chatId || !content.trim()) return
+    setActionError('')
     const text = content
     setContent('')
     try {
       const msg = await sendChatMessage(chatId, text)
       setMessages((prev) => [...prev, msg])
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send')
+      setActionError(err instanceof Error ? err.message : 'Failed to send')
     }
   }
 
   async function onResend(messageId: string) {
     if (!chatId || !messageId) return
+    setActionError('')
+    const clientIndex = messages.findIndex((m) => m.id === messageId)
+    let targetAdminId = ''
+    if (clientIndex >= 0) {
+      for (let i = clientIndex + 1; i < messages.length; i += 1) {
+        if (messages[i].sender === 'admin') {
+          targetAdminId = messages[i].id
+          break
+        }
+      }
+    }
+
+    const tempId = `resend-temp-${messageId}`
     setResendingId(messageId)
+    setResendTargetId(targetAdminId)
+    setResendTempId(targetAdminId ? '' : tempId)
+    setMessages((prev) => {
+      if (targetAdminId) {
+        return prev.map((m) =>
+          m.id === targetAdminId
+            ? { ...m, content: 'Generating new reply...' }
+            : m
+        )
+      }
+      const pending: Message = {
+        id: tempId,
+        chat_id: chatId,
+        sender: 'admin',
+        content: 'Generating new reply...',
+        created_at: new Date().toISOString(),
+      }
+      if (clientIndex < 0) return [...prev, pending]
+      return [...prev.slice(0, clientIndex + 1), pending, ...prev.slice(clientIndex + 1)]
+    })
+
     try {
       await resendClientMessage(chatId, messageId)
+      // Fallback sync in case websocket event is delayed/lost.
+      setTimeout(async () => {
+        if (!chatId) return
+        try {
+          const data = await fetchChatMessages(chatId)
+          setChat(data.chat)
+          setMessages(data.messages)
+          setResendingId('')
+          setResendTargetId('')
+          setResendTempId('')
+        } catch {
+          // keep optimistic state; ws may still deliver updates
+        }
+      }, 2200)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to resend to LLM')
-    } finally {
+      try {
+        const data = await fetchChatMessages(chatId)
+        setChat(data.chat)
+        setMessages(data.messages)
+      } catch {
+        setMessages((prev) => prev.filter((m) => m.id !== tempId))
+      }
       setResendingId('')
+      setResendTargetId('')
+      setResendTempId('')
+      setActionError(err instanceof Error ? err.message : 'Failed to resend to LLM')
+    } finally {
+      // keep loading state until ws/poll sync completes
     }
   }
 
@@ -135,10 +210,16 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
       </div>
       <div className="chat">
         {messages.map((msg) => (
-          <div key={msg.id} className={`msg ${msg.sender === 'admin' ? 'right' : 'left'}`}>
+          <div
+            key={msg.id}
+            className={`msg ${msg.sender === 'admin' ? 'right' : 'left'} ${msg.id === resendTargetId || msg.id === resendTempId ? 'msg-pending' : ''}`}
+          >
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
               {msg.content}
             </ReactMarkdown>
+            {msg.id === resendTargetId || msg.id === resendTempId ? (
+              <div className="msg-loading">Generating...</div>
+            ) : null}
             <div className="msg-footer">
               <div className="msg-meta">{new Date(msg.created_at).toLocaleTimeString()}</div>
               {msg.sender === 'client' ? (
@@ -154,6 +235,7 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
           </div>
         ))}
       </div>
+      {actionError ? <div className="muted" style={{ color: '#b00020', marginBottom: 8 }}>{actionError}</div> : null}
       <div className="composer">
         <textarea
           placeholder="Type a message (Markdown supported)"
