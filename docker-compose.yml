@@ -118,13 +118,9 @@ services:
       PORT: 8010
       LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL_PRIMARY: ${OPENROUTER_MODEL_PRIMARY:-openai/gpt-4o-mini}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
-      OPENROUTER_MODEL: "openai/gpt-oss-120b:free"
-      OPENROUTER_MODEL_PRIMARY: "openai/gpt-oss-120b:free"
-      OPENROUTER_MODEL_FALLBACK: "Qwen/Qwen3-4B:free"
-      OPENROUTER_MODEL_FALLBACK_2: "meta-llama/llama-3.2-3b-instruct:free"
-      OPENROUTER_MODEL_FALLBACK_3: "openai/gpt-4o-mini"
     ports:
       - "8010:8010"
     depends_on:

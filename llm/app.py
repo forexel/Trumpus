@@ -11,29 +11,26 @@ import httpx
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openrouter").strip().lower()
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
-OPENAI_ROUTER_MODEL = os.getenv("OPENAI_ROUTER_MODEL", "gpt-4o").strip()
-OPENAI_GENERATOR_MODEL = os.getenv("OPENAI_GENERATOR_MODEL", OPENAI_MODEL).strip()
-OPENROUTER_MODEL_PRIMARY = os.getenv("OPENROUTER_MODEL_PRIMARY", os.getenv("OPENROUTER_MODEL", "")).strip()
-OPENROUTER_MODEL_FALLBACK = os.getenv("OPENROUTER_MODEL_FALLBACK", "").strip()
-OPENROUTER_MODEL_FALLBACK_2 = os.getenv("OPENROUTER_MODEL_FALLBACK_2", "").strip()
-OPENROUTER_MODEL_FALLBACK_3 = os.getenv("OPENROUTER_MODEL_FALLBACK_3", "").strip()
+OPENROUTER_MODEL_PRIMARY = os.getenv("OPENROUTER_MODEL_PRIMARY", "openai/gpt-4o-mini").strip()
+OPENAI_ROUTER_MODEL = OPENAI_MODEL
+OPENAI_GENERATOR_MODEL = OPENAI_MODEL
 OPENROUTER_ROUTER_MODEL = os.getenv("OPENROUTER_MODEL_ROUTER", OPENROUTER_MODEL_PRIMARY).strip()
 OPENROUTER_GENERATOR_MODEL = os.getenv("OPENROUTER_MODEL_GENERATOR", OPENROUTER_MODEL_PRIMARY).strip()
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openrouter").strip().lower()
 
-CONNECT_TIMEOUT = float(os.getenv("OPENROUTER_CONNECT_TIMEOUT", "5"))
-READ_TIMEOUT = float(os.getenv("OPENROUTER_READ_TIMEOUT", "30"))
-WRITE_TIMEOUT = float(os.getenv("OPENROUTER_WRITE_TIMEOUT", "10"))
-POOL_TIMEOUT = float(os.getenv("OPENROUTER_POOL_TIMEOUT", "5"))
+CONNECT_TIMEOUT = float(os.getenv("LLM_CONNECT_TIMEOUT", os.getenv("OPENROUTER_CONNECT_TIMEOUT", "10")))
+READ_TIMEOUT = float(os.getenv("LLM_READ_TIMEOUT", os.getenv("OPENROUTER_READ_TIMEOUT", "30")))
+WRITE_TIMEOUT = float(os.getenv("LLM_WRITE_TIMEOUT", os.getenv("OPENROUTER_WRITE_TIMEOUT", "10")))
+POOL_TIMEOUT = float(os.getenv("LLM_POOL_TIMEOUT", os.getenv("OPENROUTER_POOL_TIMEOUT", "5")))
 
-MAX_ATTEMPTS = int(os.getenv("OPENROUTER_MAX_ATTEMPTS", "10"))
-MAX_ATTEMPTS_ROUTER = int(os.getenv("OPENROUTER_MAX_ATTEMPTS_ROUTER", "3"))
-MAX_ATTEMPTS_GENERATOR = int(os.getenv("OPENROUTER_MAX_ATTEMPTS_GENERATOR", "4"))
-INITIAL_DELAY = float(os.getenv("OPENROUTER_INITIAL_DELAY", "0.5"))
-MAX_DELAY = float(os.getenv("OPENROUTER_MAX_DELAY", "8"))
+MAX_ATTEMPTS = int(os.getenv("LLM_MAX_ATTEMPTS", os.getenv("OPENROUTER_MAX_ATTEMPTS", "10")))
+MAX_ATTEMPTS_ROUTER = int(os.getenv("LLM_MAX_ATTEMPTS_ROUTER", os.getenv("OPENROUTER_MAX_ATTEMPTS_ROUTER", "3")))
+MAX_ATTEMPTS_GENERATOR = int(os.getenv("LLM_MAX_ATTEMPTS_GENERATOR", os.getenv("OPENROUTER_MAX_ATTEMPTS_GENERATOR", "4")))
+INITIAL_DELAY = float(os.getenv("LLM_INITIAL_DELAY", os.getenv("OPENROUTER_INITIAL_DELAY", "0.5")))
+MAX_DELAY = float(os.getenv("LLM_MAX_DELAY", os.getenv("OPENROUTER_MAX_DELAY", "8")))
 MAX_TOKENS = min(int(os.getenv("LLM_MAX_TOKENS", "1000")), 1000)
 TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
 TOP_P = float(os.getenv("LLM_TOP_P", "0.95"))
@@ -645,18 +642,16 @@ def unique_pairs(items: list[tuple[str, str]]) -> list[tuple[str, str]]:
 
 def model_candidates_for_stage(stage: str) -> list[tuple[str, str]]:
     openai_model = OPENAI_ROUTER_MODEL if stage == "router" else OPENAI_GENERATOR_MODEL
-    openrouter_stage = OPENROUTER_ROUTER_MODEL if stage == "router" else OPENROUTER_GENERATOR_MODEL
-    openrouter_models = [m for m in [openrouter_stage, OPENROUTER_MODEL_PRIMARY, OPENROUTER_MODEL_FALLBACK, OPENROUTER_MODEL_FALLBACK_2, OPENROUTER_MODEL_FALLBACK_3] if m]
+    openrouter_model = OPENROUTER_ROUTER_MODEL if stage == "router" else OPENROUTER_GENERATOR_MODEL
     candidates: list[tuple[str, str]] = []
-
     if LLM_PROVIDER == "openai":
         if OPENAI_API_KEY and openai_model:
             candidates.append(("openai", openai_model))
-        if OPENROUTER_API_KEY:
-            candidates.extend(("openrouter", m) for m in openrouter_models)
+        if OPENROUTER_API_KEY and openrouter_model:
+            candidates.append(("openrouter", openrouter_model))
     else:
-        if OPENROUTER_API_KEY:
-            candidates.extend(("openrouter", m) for m in openrouter_models)
+        if OPENROUTER_API_KEY and openrouter_model:
+            candidates.append(("openrouter", openrouter_model))
         if OPENAI_API_KEY and openai_model:
             candidates.append(("openai", openai_model))
     return unique_pairs(candidates)
@@ -688,11 +683,13 @@ async def provider_chat_completion(
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
             json=payload,
         )
-    return await client.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
-        json=payload,
-    )
+    if provider == "openrouter":
+        return await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json=payload,
+        )
+    raise LLMError(503, "llm_not_configured", f"Unsupported provider: {provider}")
 
 
 def extract_content(data: dict[str, Any]) -> str:
@@ -772,6 +769,11 @@ async def run_stage_completion(
             last_error = "upstream_timeout"
         except httpx.RequestError as exc:
             last_error = f"upstream_request_error: {exc}"
+
+        # Fast failover: if we still have untried providers/models, switch immediately.
+        # Do not wait backoff before first fallback (e.g., openrouter -> openai).
+        if attempts < len(candidates):
+            continue
 
         await asyncio.sleep(delay + random.random() * (0.2 * delay))
         delay = min(delay * 2, MAX_DELAY)
