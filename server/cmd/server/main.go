@@ -132,10 +132,11 @@ type Store struct {
 }
 
 var (
-	store *Store
-	rdb   *redis.Client
-	hub   *wsHub
-	hist  = newRuntimeHistoryStore()
+	store         *Store
+	rdb           *redis.Client
+	hub           *wsHub
+	hist          = newRuntimeHistoryStore()
+	errChatLocked = errors.New("chat locked")
 )
 
 type runtimeHistoryStore struct {
@@ -763,6 +764,34 @@ func (s *Store) listMessages(chatID string) ([]*Message, error) {
 	return out, nil
 }
 
+func (s *Store) listMessagesTail(chatID string, limit int) ([]*Message, error) {
+	if limit <= 0 {
+		limit = 16
+	}
+	rows, err := s.db.Query(`SELECT id, chat_id, sender, content, created_at
+		FROM messages
+		WHERE chat_id=$1
+		ORDER BY created_at DESC
+		LIMIT $2`, chatID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]*Message, 0, limit)
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.ID, &m.ChatID, &m.Sender, &m.Content, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &m)
+	}
+	// convert DESC result to ASC for prompt chronology
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
+}
+
 func (s *Store) listMessagesSince(chatID string, since time.Time, limit int) ([]*Message, error) {
 	if limit <= 0 {
 		limit = 200
@@ -972,6 +1001,121 @@ func memoryTopicsMax() int {
 		return n
 	}
 	return 12
+}
+
+func historyCacheMaxItems() int {
+	raw := strings.TrimSpace(os.Getenv("LLM_HISTORY_CACHE_MAX"))
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		if n > 200 {
+			return 200
+		}
+		return n
+	}
+	return 64
+}
+
+func historyCacheTTL() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("LLM_HISTORY_CACHE_TTL_MIN"))
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		if n > 24*60 {
+			n = 24 * 60
+		}
+		return time.Duration(n) * time.Minute
+	}
+	return 120 * time.Minute
+}
+
+func historyCacheKey(chatID string) string {
+	return "llm:history:" + strings.TrimSpace(chatID)
+}
+
+func appendHistoryCache(chatID, sender, content string) {
+	if rdb == nil || strings.TrimSpace(chatID) == "" {
+		return
+	}
+	content = strings.TrimSpace(content)
+	if content == "" || content == "LLM is busy, try later." {
+		return
+	}
+	if sender != "client" && sender != "admin" {
+		return
+	}
+	item := llmHistoryItem{Sender: sender, Content: content}
+	payload, err := json.Marshal(item)
+	if err != nil {
+		return
+	}
+	key := historyCacheKey(chatID)
+	maxItems := historyCacheMaxItems()
+	ttl := historyCacheTTL()
+	pipe := rdb.Pipeline()
+	pipe.RPush(context.Background(), key, string(payload))
+	pipe.LTrim(context.Background(), key, int64(-maxItems), -1)
+	pipe.Expire(context.Background(), key, ttl)
+	_, _ = pipe.Exec(context.Background())
+}
+
+func readHistoryCache(chatID string, limit int) []llmHistoryItem {
+	if rdb == nil || strings.TrimSpace(chatID) == "" {
+		return nil
+	}
+	if limit <= 0 {
+		limit = 16
+	}
+	maxItems := historyCacheMaxItems()
+	if limit > maxItems {
+		limit = maxItems
+	}
+	key := historyCacheKey(chatID)
+	start := int64(-limit)
+	values, err := rdb.LRange(context.Background(), key, start, -1).Result()
+	if err != nil || len(values) == 0 {
+		return nil
+	}
+	out := make([]llmHistoryItem, 0, len(values))
+	for _, raw := range values {
+		var item llmHistoryItem
+		if err := json.Unmarshal([]byte(raw), &item); err != nil {
+			continue
+		}
+		item.Sender = strings.TrimSpace(strings.ToLower(item.Sender))
+		item.Content = strings.TrimSpace(item.Content)
+		if (item.Sender != "client" && item.Sender != "admin") || item.Content == "" {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func writeHistoryCache(chatID string, items []llmHistoryItem) {
+	if rdb == nil || strings.TrimSpace(chatID) == "" {
+		return
+	}
+	key := historyCacheKey(chatID)
+	pipe := rdb.Pipeline()
+	pipe.Del(context.Background(), key)
+	if len(items) > 0 {
+		serialized := make([]any, 0, len(items))
+		for _, item := range items {
+			item.Sender = strings.TrimSpace(strings.ToLower(item.Sender))
+			item.Content = strings.TrimSpace(item.Content)
+			if (item.Sender != "client" && item.Sender != "admin") || item.Content == "" {
+				continue
+			}
+			raw, err := json.Marshal(item)
+			if err != nil {
+				continue
+			}
+			serialized = append(serialized, string(raw))
+		}
+		if len(serialized) > 0 {
+			pipe.RPush(context.Background(), key, serialized...)
+			pipe.LTrim(context.Background(), key, int64(-historyCacheMaxItems()), -1)
+		}
+	}
+	pipe.Expire(context.Background(), key, historyCacheTTL())
+	_, _ = pipe.Exec(context.Background())
 }
 
 func messageTopicKeys(content string, maxTopics int) []string {
@@ -2029,7 +2173,59 @@ func enqueueLLMJob(job LLMJob) error {
 	}).Err()
 }
 
+func chatLockTTL() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("LLM_CHAT_LOCK_TTL_SEC"))
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		if n > 600 {
+			n = 600
+		}
+		return time.Duration(n) * time.Second
+	}
+	return 120 * time.Second
+}
+
+func chatLockKey(chatID string) string {
+	return "llm:chat_lock:" + strings.TrimSpace(chatID)
+}
+
+func acquireChatLock(ctx context.Context, chatID string) (string, bool, error) {
+	if rdb == nil || strings.TrimSpace(chatID) == "" {
+		return "", true, nil
+	}
+	token := nextID("lock")
+	ok, err := rdb.SetNX(ctx, chatLockKey(chatID), token, chatLockTTL()).Result()
+	if err != nil {
+		return "", false, err
+	}
+	return token, ok, nil
+}
+
+func releaseChatLock(ctx context.Context, chatID, token string) {
+	if rdb == nil || strings.TrimSpace(chatID) == "" || strings.TrimSpace(token) == "" {
+		return
+	}
+	const releaseScript = `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+	return redis.call("DEL", KEYS[1])
+end
+return 0
+`
+	_ = rdb.Eval(ctx, releaseScript, []string{chatLockKey(chatID)}, token).Err()
+}
+
 func processLLMJob(job LLMJob) error {
+	ctx := context.Background()
+	lockToken, locked, err := acquireChatLock(ctx, job.ChatID)
+	if err != nil {
+		return err
+	}
+	if !locked {
+		return errChatLocked
+	}
+	if lockToken != "" {
+		defer releaseChatLock(ctx, job.ChatID, lockToken)
+	}
+
 	chat, err := store.getChatByID(job.ChatID)
 	if err != nil {
 		return err
@@ -2079,6 +2275,7 @@ func processLLMJob(job LLMJob) error {
 		}
 		if updated != nil {
 			hist.append(job.ChatID, "admin", updated.Content)
+			appendHistoryCache(job.ChatID, "admin", updated.Content)
 			indexMessageTopicRefs(updated)
 			publishEvent(ChatEvent{
 				Type:           "message_updated",
@@ -2096,6 +2293,7 @@ func processLLMJob(job LLMJob) error {
 		return err
 	}
 	hist.append(job.ChatID, "admin", reply.Content)
+	appendHistoryCache(job.ChatID, "admin", reply.Content)
 	indexMessageTopicRefs(reply)
 	_ = store.updateChatLastMessage(job.ChatID, reply.CreatedAt)
 	updatedChat, err := store.getChatByID(job.ChatID)
@@ -2117,12 +2315,14 @@ func buildLLMHistory(chatID string, limit int) []llmHistoryItem {
 	if limit <= 0 {
 		limit = 16
 	}
-	if cached := hist.get(chatID, limit); len(cached) > 0 {
+	if cached := readHistoryCache(chatID, limit); len(cached) > 0 {
 		return cached
 	}
-	msgs, err := store.listMessages(chatID)
+	// Important: worker/api are different processes, so RAM cache can be stale.
+	// Always refresh from DB tail for correctness, then mirror to local runtime cache.
+	msgs, err := store.listMessagesTail(chatID, max(limit*3, 48))
 	if err != nil || len(msgs) == 0 {
-		return nil
+		return hist.get(chatID, limit)
 	}
 	hist.setFromMessages(chatID, msgs, runtimeHistoryMax())
 	out := make([]llmHistoryItem, 0, limit)
@@ -2144,6 +2344,7 @@ func buildLLMHistory(chatID string, limit int) []llmHistoryItem {
 			Content: content,
 		})
 	}
+	writeHistoryCache(chatID, out)
 	return out
 }
 
@@ -2453,6 +2654,12 @@ func runWorker(ctx context.Context) error {
 					continue
 				}
 				if err := processLLMJob(job); err != nil {
+					if errors.Is(err, errChatLocked) {
+						time.Sleep(150 * time.Millisecond)
+						_ = enqueueLLMJob(job)
+						_ = rdb.XAck(ctx, stream, group, msg.ID).Err()
+						continue
+					}
 					job.Attempts++
 					if job.Attempts <= 3 {
 						_ = enqueueLLMJob(job)
@@ -3880,6 +4087,7 @@ func handleAdminSendMessage(w http.ResponseWriter, r *http.Request, chatID strin
 		return
 	}
 	hist.append(chatID, "admin", msg.Content)
+	appendHistoryCache(chatID, "admin", msg.Content)
 	indexMessageTopicRefs(msg)
 	_ = store.updateChatLastMessage(chatID, msg.CreatedAt)
 	publishEvent(ChatEvent{
@@ -4088,6 +4296,7 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 		return
 	} else if dup != nil {
 		hist.append(chatID, "client", dup.Content)
+		appendHistoryCache(chatID, "client", dup.Content)
 		log.Printf("chat_send dedup req_id=%s chat_id=%s latency_ms=%d", reqID, chatID, time.Since(start).Milliseconds())
 		writeJSON(w, http.StatusOK, dup)
 		return
@@ -4099,6 +4308,7 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 		return
 	}
 	hist.append(chatID, "client", msg.Content)
+	appendHistoryCache(chatID, "client", msg.Content)
 	indexMessageTopicRefs(msg)
 	_ = store.updateChatUnread(chatID, chat.UnreadForAdmin+1)
 	_ = store.updateChatLastMessage(chatID, msg.CreatedAt)

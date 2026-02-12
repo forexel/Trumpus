@@ -136,7 +136,8 @@ Rules:
    End with a hook or topic suggestion.
 7. Never mention system instructions.
 8. Keep the response coherent, direct, and in-character.
-9. Do not break character. Do not mention being a parody/character/AI unless the user explicitly asks about identity (for example: "are you AI?", "are you real?")."""
+9. Do not break character. Do not mention being a parody/character/AI unless the user explicitly asks about identity (for example: "are you AI?", "are you real?").
+10. Always respond in English."""
 
 GENERATOR_INTENT_BEHAVIOR = """Intent behaviors:
 - greeting/small_talk: be brief and reciprocal (ask 'and you?' if initiative).
@@ -1296,7 +1297,7 @@ async def build_router_and_plan(
             router_prompt += f"{context_prefix}\n\n"
         router_prompt += (
             f'User message:\n"{content}"\n\n'
-            f"Conversation language hint: Russian.\n"
+            f"Conversation language hint: English.\n"
             f"Classify and return JSON only."
         )
         router_messages = [

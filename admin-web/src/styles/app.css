@@ -225,6 +225,9 @@ body {
   flex: 1;
   min-height: 0;
   margin-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 label { display: block; margin-top: 12px; font-size: 14px; color: var(--muted); }
@@ -251,6 +254,13 @@ button.ghost { background: transparent; color: var(--primary); border: 1px solid
   text-decoration: none;
 }
 .list-item.chat-item { align-items: center; }
+
+.clients-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+}
 
 .chat-row { cursor: pointer; }
 .chat-row:hover { background: #f9fbff; }
