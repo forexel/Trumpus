@@ -2237,27 +2237,53 @@ func processLLMJob(job LLMJob) error {
 	history := buildLLMHistory(job.ChatID, 16)
 	topicContext := buildTopicContext(job.ChatID, job.Content, time.Now().UTC())
 	memory := llmMemory{}
-	callOnce := func() (string, int, string, error) {
+	isRetriableLLMFailure := func(status int, callErr error) bool {
+		if status == 408 || status == 425 || status == 429 {
+			return true
+		}
+		if status >= 500 {
+			return true
+		}
+		if status == 0 && callErr != nil {
+			// Transport-level/network errors where no upstream HTTP status is available.
+			return true
+		}
+		return false
+	}
+
+	callOnce := func() (string, int, string, error, bool) {
 		llmBase := os.Getenv("LLM_BASE")
 		resp, status, body, err := callLLM(llmBase, job.ChatID, job.Persona, job.PersonaPrompt, job.Content, history, topicContext, memory)
-		if err != nil || strings.TrimSpace(resp) == "" {
+		failed := err != nil || strings.TrimSpace(resp) == ""
+		retriable := isRetriableLLMFailure(status, err)
+		if failed {
 			log.Printf("llm_error req_id=%s chat_id=%s status=%d err=%v body=%s", job.RequestID, job.ChatID, status, err, body)
-			time.Sleep(2 * time.Second)
-			resp, status, body, err = callLLM(llmBase, job.ChatID, job.Persona, job.PersonaPrompt, job.Content, history, topicContext, memory)
+			if retriable {
+				time.Sleep(2 * time.Second)
+				resp, status, body, err = callLLM(llmBase, job.ChatID, job.Persona, job.PersonaPrompt, job.Content, history, topicContext, memory)
+			}
 		}
 		if err != nil || strings.TrimSpace(resp) == "" {
 			log.Printf("llm_error_final req_id=%s chat_id=%s status=%d err=%v body=%s", job.RequestID, job.ChatID, status, err, body)
-			resp = "LLM is busy, try later."
+			if isRetriableLLMFailure(status, err) {
+				resp = "LLM is busy, try later."
+				return resp, status, body, err, true
+			}
+			resp = "LLM request failed."
+			return resp, status, body, err, false
 		}
-		return resp, status, body, err
+		return resp, status, body, err, false
 	}
 
-	resp, _, _, _ := callOnce()
+	resp, _, _, _, retriableFailure := callOnce()
 	// Admin resend should make a real retry cycle, not silently keep the previous busy result.
-	if job.Source == "admin_resend" && strings.TrimSpace(resp) == "LLM is busy, try later." {
+	if job.Source == "admin_resend" && retriableFailure && strings.TrimSpace(resp) == "LLM is busy, try later." {
 		for i := 0; i < 2 && strings.TrimSpace(resp) == "LLM is busy, try later."; i++ {
 			time.Sleep(2 * time.Second)
-			resp, _, _, _ = callOnce()
+			resp, _, _, _, retriableFailure = callOnce()
+			if !retriableFailure {
+				break
+			}
 		}
 	}
 
@@ -3066,6 +3092,15 @@ skipMemoryBackfill:
 func callLLM(baseURL, chatID, persona, personaPrompt, content string, history []llmHistoryItem, topicContext []llmHistoryItem, memory llmMemory) (string, int, string, error) {
 	if strings.TrimSpace(baseURL) == "" {
 		return "", 0, "", fmt.Errorf("llm base not set")
+	}
+	if history == nil {
+		history = []llmHistoryItem{}
+	}
+	if topicContext == nil {
+		topicContext = []llmHistoryItem{}
+	}
+	if memory.Topics == nil {
+		memory.Topics = []string{}
 	}
 	payload := jsonMap{
 		"chat_id":        chatID,

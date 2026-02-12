@@ -367,9 +367,9 @@ class RespondRequest(BaseModel):
     content: str
     persona: str | None = None
     persona_prompt: str | None = None
-    history: list[dict[str, str]] = Field(default_factory=list)
-    topic_context: list[dict[str, str]] = Field(default_factory=list)
-    memory: dict[str, Any] = Field(default_factory=dict)
+    history: list[dict[str, str]] | None = None
+    topic_context: list[dict[str, str]] | None = None
+    memory: dict[str, Any] | None = None
 
 
 def normalize_history(history: list[dict[str, str]], max_items: int = 16) -> list[dict[str, str]]:
