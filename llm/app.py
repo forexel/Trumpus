@@ -37,6 +37,8 @@ TOP_P = float(os.getenv("LLM_TOP_P", "0.95"))
 PRESENCE_PENALTY = float(os.getenv("LLM_PRESENCE_PENALTY", "0.4"))
 FREQUENCY_PENALTY = float(os.getenv("LLM_FREQUENCY_PENALTY", "0.2"))
 INCLUDE_EXAMPLES = os.getenv("LLM_INCLUDE_EXAMPLES", "0").strip() in {"1", "true", "yes"}
+MEMORY_SUMMARY_MAX_CHARS = min(max(int(os.getenv("MEMORY_SUMMARY_MAX_CHARS", "1400")), 300), 8000)
+MEMORY_TOPICS_MAX = min(max(int(os.getenv("MEMORY_TOPICS_MAX", "12")), 1), 30)
 
 ROUTER_SYSTEM_PROMPT = """You are a semantic conversation analyzer for a roleplay chat.
 
@@ -363,6 +365,83 @@ class RespondRequest(BaseModel):
     chat_id: str
     content: str
     persona: str | None = None
+    persona_prompt: str | None = None
+    history: list[dict[str, str]] = Field(default_factory=list)
+    topic_context: list[dict[str, str]] = Field(default_factory=list)
+    memory: dict[str, Any] = Field(default_factory=dict)
+
+
+def normalize_history(history: list[dict[str, str]], max_items: int = 16) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    if not history:
+        return out
+    for item in history[-max_items:]:
+        sender = str(item.get("sender", "")).strip().lower()
+        content = str(item.get("content", "")).strip()
+        if sender not in {"client", "admin"}:
+            continue
+        if not content:
+            continue
+        if len(content) > 500:
+            content = content[:500].rstrip() + "..."
+        out.append({"sender": sender, "content": content})
+    return out
+
+
+def render_history_block(history: list[dict[str, str]]) -> str:
+    if not history:
+        return "(no history)"
+    lines: list[str] = []
+    for h in history:
+        role = "User" if h["sender"] == "client" else "Assistant"
+        lines.append(f"{role}: {h['content']}")
+    return "\n".join(lines)
+
+
+def render_topic_context_block(items: list[dict[str, str]]) -> str:
+    if not items:
+        return "(no topic context)"
+    lines: list[str] = []
+    for h in items:
+        role = "User" if h["sender"] == "client" else "Assistant"
+        lines.append(f"{role}: {h['content']}")
+    return "\n".join(lines)
+
+
+def normalize_memory(memory: dict[str, Any]) -> dict[str, Any]:
+    summary = str(memory.get("summary", "")).strip()
+    if len(summary) > MEMORY_SUMMARY_MAX_CHARS:
+        summary = summary[:MEMORY_SUMMARY_MAX_CHARS].rstrip() + "..."
+    topics_raw = memory.get("topics", [])
+    topics: list[str] = []
+    if isinstance(topics_raw, list):
+        for item in topics_raw[:MEMORY_TOPICS_MAX]:
+            t = str(item).strip().lower()
+            if t:
+                topics.append(t)
+    return {"summary": summary, "topics": topics}
+
+
+def render_memory_block(memory: dict[str, Any]) -> str:
+    summary = str(memory.get("summary", "")).strip()
+    topics = memory.get("topics", [])
+    lines: list[str] = []
+    if summary:
+        lines.append(f"Daily summary: {summary}")
+    if topics:
+        lines.append(f"Daily topics: {', '.join(topics)}")
+    if not lines:
+        return "(no memory)"
+    return "\n".join(lines)
+
+
+def normalize_persona_prompt(value: str | None) -> str:
+    prompt = (value or "").strip()
+    if not prompt:
+        return ""
+    if len(prompt) > 24000:
+        prompt = prompt[:24000].rstrip()
+    return prompt
 
 
 class RouterResult(BaseModel):
@@ -1178,10 +1257,33 @@ def post_process_response(raw: str, plan: ResponsePlan, user_text: str) -> str:
     return text
 
 
-async def build_router_and_plan(chat_id: str, content: str, persona_input: str | None) -> dict[str, Any]:
+async def build_router_and_plan(
+    chat_id: str,
+    content: str,
+    persona_input: str | None,
+    persona_prompt_input: str | None = None,
+    history_input: list[dict[str, str]] | None = None,
+    topic_context_input: list[dict[str, str]] | None = None,
+    memory_input: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     persona = (persona_input or "Donald Trump").strip()
     if persona not in PERSONA_PROMPTS:
         persona = "Donald Trump"
+    persona_prompt = normalize_persona_prompt(persona_prompt_input) or PERSONA_PROMPTS[persona]
+    history = normalize_history(history_input or [])
+    topic_context = normalize_history(topic_context_input or [], max_items=8)
+    memory = normalize_memory(memory_input or {})
+    history_block = render_history_block(history)
+    topic_context_block = render_topic_context_block(topic_context)
+    memory_block = render_memory_block(memory)
+    context_parts: list[str] = []
+    if topic_context:
+        context_parts.append(f"Relevant past snippets:\n{topic_context_block}")
+    if memory.get("summary") or memory.get("topics"):
+        context_parts.append(f"Long-term memory:\n{memory_block}")
+    if history:
+        context_parts.append(f"Recent conversation:\n{history_block}")
+    context_prefix = "\n\n".join(context_parts)
 
     router_raw = "fast_path"
     router_provider = "deterministic"
@@ -1189,7 +1291,10 @@ async def build_router_and_plan(chat_id: str, content: str, persona_input: str |
     if should_use_fast_router_path(content):
         router = router_fallback(content)
     else:
-        router_prompt = (
+        router_prompt = ""
+        if context_prefix:
+            router_prompt += f"{context_prefix}\n\n"
+        router_prompt += (
             f'User message:\n"{content}"\n\n'
             f"Conversation language hint: Russian.\n"
             f"Classify and return JSON only."
@@ -1239,8 +1344,16 @@ async def build_router_and_plan(chat_id: str, content: str, persona_input: str |
         if router.initiative_type == "none":
             router.initiative_type = "day_plans_hook"
     plan = build_response_plan(router, persona, content)
+    if memory.get("topics") and not plan.cultural_anchor:
+        plan.cultural_anchor = str(memory["topics"][0])
     return {
         "persona": persona,
+        "persona_prompt": persona_prompt,
+        "history": history,
+        "topic_context": topic_context,
+        "topic_context_block": topic_context_block,
+        "memory": memory,
+        "memory_block": memory_block,
         "router_raw": router_raw,
         "router": router,
         "plan": plan,
@@ -1258,7 +1371,7 @@ async def debug_plan(req: RespondRequest, response: Response):
         return {"error": "llm_not_configured", "detail": "No API keys configured"}
 
     try:
-        data = await build_router_and_plan(req.chat_id, req.content, req.persona)
+        data = await build_router_and_plan(req.chat_id, req.content, req.persona, req.persona_prompt, req.history, req.topic_context, req.memory)
         router = data["router"]
         plan = data["plan"]
         router_payload = router.model_dump() if hasattr(router, "model_dump") else router.dict()
@@ -1268,6 +1381,9 @@ async def debug_plan(req: RespondRequest, response: Response):
             "persona": data["persona"],
             "router_provider": data["router_provider"],
             "router_model": data["router_model"],
+            "history_items": len(data["history"]),
+            "topic_context_items": len(data["topic_context"]),
+            "memory": data["memory"],
             "router_raw": data["router_raw"],
             "router": router_payload,
             "plan": plan_payload,
@@ -1289,14 +1405,17 @@ async def respond(req: RespondRequest, response: Response):
     start_time = time.time()
 
     try:
-        data = await build_router_and_plan(req.chat_id, req.content, req.persona)
+        data = await build_router_and_plan(req.chat_id, req.content, req.persona, req.persona_prompt, req.history, req.topic_context, req.memory)
         persona = data["persona"]
+        history_block = render_history_block(data["history"])
+        topic_context_block = data["topic_context_block"]
+        memory_block = data["memory_block"]
         plan = data["plan"]
         examples = EXAMPLE_SUFFIXES.get(persona, EXAMPLE_SUFFIXES["Donald Trump"]) if INCLUDE_EXAMPLES else ""
 
         generator_system_prompt = (
             f"{GLOBAL_COMEDY_PATCH}\n\n"
-            f"{PERSONA_PROMPTS[persona]}\n\n"
+            f"{data['persona_prompt']}\n\n"
             f"{STYLE_RULE}\n\n"
             f"{GENERATOR_INTENT_BEHAVIOR}\n\n"
             f"{examples}\n\n"
@@ -1305,11 +1424,18 @@ async def respond(req: RespondRequest, response: Response):
         )
         plan_payload = plan.model_dump() if hasattr(plan, "model_dump") else plan.dict()
         plan_json = json.dumps(plan_payload, ensure_ascii=True, indent=2)
-        generator_user_prompt = (
-            f'USER MESSAGE:\n"{req.content}"\n\n'
-            f"RESPONSE PLAN:\n{plan_json}\n\n"
-            "Generate final answer."
-        )
+        prompt_parts: list[str] = []
+        if data["topic_context"]:
+            prompt_parts.append(f"RELEVANT PAST SNIPPETS:\n{topic_context_block}")
+        mem_data = data["memory"] or {}
+        if mem_data.get("summary") or mem_data.get("topics"):
+            prompt_parts.append(f"LONG-TERM MEMORY:\n{memory_block}")
+        if data["history"]:
+            prompt_parts.append(f"RECENT CONVERSATION:\n{history_block}")
+        prompt_parts.append(f'USER MESSAGE:\n"{req.content}"')
+        prompt_parts.append(f"RESPONSE PLAN:\n{plan_json}")
+        prompt_parts.append("Generate final answer.")
+        generator_user_prompt = "\n\n".join(prompt_parts)
         generator_messages = [
             {"role": "system", "content": generator_system_prompt},
             {"role": "user", "content": generator_user_prompt},

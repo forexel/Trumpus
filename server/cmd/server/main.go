@@ -21,6 +21,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,8 +49,8 @@ const (
 )
 
 const (
-	defaultAccessTTLMinutes = 15
-	defaultRefreshTTLDays   = 30
+	defaultAccessTTLMinutes = 525600 // 365 days
+	defaultRefreshTTLDays   = 365
 	defaultRateLimitPerMin  = 60
 	defaultAdminTTlHours    = 8
 	defaultWSTTLMinutes     = 5
@@ -99,6 +101,27 @@ type llmResponse struct {
 	Content string `json:"content"`
 }
 
+type llmHistoryItem struct {
+	Sender  string `json:"sender"`
+	Content string `json:"content"`
+}
+
+type llmMemory struct {
+	Summary string   `json:"summary"`
+	Topics  []string `json:"topics,omitempty"`
+}
+
+type llmTopicRef struct {
+	TopicKey  string
+	MessageID string
+	CreatedAt time.Time
+}
+
+type llmMemoryRow struct {
+	DayDate string
+	Memory  llmMemory
+}
+
 type User struct {
 	Email    string `json:"email"`
 	Password string `json:"-"`
@@ -112,16 +135,109 @@ var (
 	store *Store
 	rdb   *redis.Client
 	hub   *wsHub
+	hist  = newRuntimeHistoryStore()
 )
 
+type runtimeHistoryStore struct {
+	mu     sync.RWMutex
+	byChat map[string][]llmHistoryItem
+}
+
+func newRuntimeHistoryStore() *runtimeHistoryStore {
+	return &runtimeHistoryStore{byChat: make(map[string][]llmHistoryItem)}
+}
+
+func runtimeHistoryMax() int {
+	raw := strings.TrimSpace(os.Getenv("LLM_RUNTIME_HISTORY_MAX"))
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		if n > 100 {
+			return 100
+		}
+		return n
+	}
+	return 24
+}
+
+func (h *runtimeHistoryStore) get(chatID string, limit int) []llmHistoryItem {
+	if chatID == "" {
+		return nil
+	}
+	h.mu.RLock()
+	items := h.byChat[chatID]
+	h.mu.RUnlock()
+	if len(items) == 0 {
+		return nil
+	}
+	if limit <= 0 || limit > len(items) {
+		limit = len(items)
+	}
+	start := len(items) - limit
+	out := make([]llmHistoryItem, limit)
+	copy(out, items[start:])
+	return out
+}
+
+func (h *runtimeHistoryStore) append(chatID, sender, content string) {
+	if chatID == "" {
+		return
+	}
+	content = strings.TrimSpace(content)
+	if content == "" || content == "LLM is busy, try later." {
+		return
+	}
+	if sender != "client" && sender != "admin" {
+		return
+	}
+	maxItems := runtimeHistoryMax()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	items := append(h.byChat[chatID], llmHistoryItem{Sender: sender, Content: content})
+	if len(items) > maxItems {
+		items = items[len(items)-maxItems:]
+	}
+	h.byChat[chatID] = items
+}
+
+func (h *runtimeHistoryStore) setFromMessages(chatID string, msgs []*Message, limit int) {
+	if chatID == "" {
+		return
+	}
+	if limit <= 0 {
+		limit = runtimeHistoryMax()
+	}
+	start := 0
+	if len(msgs) > limit {
+		start = len(msgs) - limit
+	}
+	items := make([]llmHistoryItem, 0, limit)
+	for i := start; i < len(msgs); i++ {
+		m := msgs[i]
+		if m == nil {
+			continue
+		}
+		content := strings.TrimSpace(m.Content)
+		if content == "" || content == "LLM is busy, try later." {
+			continue
+		}
+		if m.Sender != "client" && m.Sender != "admin" {
+			continue
+		}
+		items = append(items, llmHistoryItem{Sender: m.Sender, Content: content})
+	}
+	h.mu.Lock()
+	h.byChat[chatID] = items
+	h.mu.Unlock()
+}
+
 type LLMJob struct {
-	ChatID    string `json:"chat_id"`
-	Persona   string `json:"persona"`
-	Content   string `json:"content"`
-	RequestID string `json:"request_id"`
-	Source    string `json:"source,omitempty"`
-	ReplaceID string `json:"replace_message_id,omitempty"`
-	Attempts  int    `json:"attempts"`
+	ChatID        string `json:"chat_id"`
+	Persona       string `json:"persona"`
+	PersonaPrompt string `json:"persona_prompt,omitempty"`
+	Content       string `json:"content"`
+	RequestID     string `json:"request_id"`
+	Source        string `json:"source,omitempty"`
+	ReplaceID     string `json:"replace_message_id,omitempty"`
+	Attempts      int    `json:"attempts"`
 }
 
 type ChatEvent struct {
@@ -293,6 +409,28 @@ func (s *Store) migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)`,
+		`CREATE TABLE IF NOT EXISTS chat_memories (
+			chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+			day_date DATE NOT NULL,
+			summary TEXT NOT NULL DEFAULT '',
+			topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (chat_id, day_date)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_chat_memories_chat_day ON chat_memories(chat_id, day_date)`,
+		`CREATE TABLE IF NOT EXISTS system_flags (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS chat_topic_refs (
+			chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+			topic_key TEXT NOT NULL,
+			message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+			created_at TIMESTAMPTZ NOT NULL,
+			PRIMARY KEY (chat_id, topic_key, message_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_chat_topic_refs_lookup ON chat_topic_refs(chat_id, topic_key, created_at DESC)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -623,6 +761,309 @@ func (s *Store) listMessages(chatID string) ([]*Message, error) {
 		out = append(out, &m)
 	}
 	return out, nil
+}
+
+func (s *Store) listMessagesSince(chatID string, since time.Time, limit int) ([]*Message, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := s.db.Query(`SELECT id, chat_id, sender, content, created_at
+		FROM messages
+		WHERE chat_id=$1 AND created_at >= $2
+		ORDER BY created_at ASC
+		LIMIT $3`, chatID, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Message
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.ID, &m.ChatID, &m.Sender, &m.Content, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &m)
+	}
+	return out, nil
+}
+
+func (s *Store) getChatMemory(chatID string, dayDate time.Time) (*llmMemory, error) {
+	var summary string
+	var topicsRaw []byte
+	err := s.db.QueryRow(
+		`SELECT summary, topics FROM chat_memories WHERE chat_id=$1 AND day_date=$2`,
+		chatID,
+		dayDate.Format("2006-01-02"),
+	).Scan(&summary, &topicsRaw)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	topics := []string{}
+	if len(topicsRaw) > 0 {
+		_ = json.Unmarshal(topicsRaw, &topics)
+	}
+	return &llmMemory{Summary: summary, Topics: topics}, nil
+}
+
+func (s *Store) upsertChatMemory(chatID string, dayDate time.Time, memory llmMemory) error {
+	topicsJSON, err := json.Marshal(memory.Topics)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO chat_memories (chat_id, day_date, summary, topics, updated_at)
+		 VALUES ($1, $2, $3, $4::jsonb, NOW())
+		 ON CONFLICT (chat_id, day_date)
+		 DO UPDATE SET summary=EXCLUDED.summary, topics=EXCLUDED.topics, updated_at=NOW()`,
+		chatID,
+		dayDate.Format("2006-01-02"),
+		memory.Summary,
+		string(topicsJSON),
+	)
+	return err
+}
+
+func (s *Store) listChatMemoriesSince(chatID string, sinceDay time.Time, limit int) ([]llmMemoryRow, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+	rows, err := s.db.Query(
+		`SELECT day_date::text, summary, topics
+		 FROM chat_memories
+		 WHERE chat_id=$1 AND day_date >= $2
+		 ORDER BY day_date DESC
+		 LIMIT $3`,
+		chatID,
+		sinceDay.Format("2006-01-02"),
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]llmMemoryRow, 0, limit)
+	for rows.Next() {
+		var dayDate string
+		var summary string
+		var topicsRaw []byte
+		if err := rows.Scan(&dayDate, &summary, &topicsRaw); err != nil {
+			return nil, err
+		}
+		topics := []string{}
+		if len(topicsRaw) > 0 {
+			_ = json.Unmarshal(topicsRaw, &topics)
+		}
+		out = append(out, llmMemoryRow{
+			DayDate: dayDate,
+			Memory: llmMemory{
+				Summary: summary,
+				Topics:  topics,
+			},
+		})
+	}
+	return out, nil
+}
+
+func (s *Store) getSystemFlag(key string) (string, bool, error) {
+	var value string
+	err := s.db.QueryRow(`SELECT value FROM system_flags WHERE key=$1`, key).Scan(&value)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return value, true, nil
+}
+
+func (s *Store) setSystemFlag(key, value string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO system_flags (key, value, updated_at)
+		 VALUES ($1, $2, NOW())
+		 ON CONFLICT (key)
+		 DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`,
+		key,
+		value,
+	)
+	return err
+}
+
+func (s *Store) upsertTopicRef(chatID, topicKey, messageID string, createdAt time.Time) error {
+	if chatID == "" || topicKey == "" || messageID == "" {
+		return nil
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO chat_topic_refs (chat_id, topic_key, message_id, created_at)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (chat_id, topic_key, message_id) DO NOTHING`,
+		chatID, topicKey, messageID, createdAt,
+	)
+	return err
+}
+
+func (s *Store) listTopicRefs(chatID string, topicKeys []string, since time.Time, perTopic int) ([]llmTopicRef, error) {
+	if len(topicKeys) == 0 {
+		return nil, nil
+	}
+	if perTopic <= 0 {
+		perTopic = 3
+	}
+	out := make([]llmTopicRef, 0, len(topicKeys)*perTopic)
+	for _, t := range topicKeys {
+		rows, err := s.db.Query(
+			`SELECT topic_key, message_id, created_at
+			 FROM chat_topic_refs
+			 WHERE chat_id=$1 AND topic_key=$2 AND created_at >= $3
+			 ORDER BY created_at DESC
+			 LIMIT $4`,
+			chatID, t, since, perTopic,
+		)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var item llmTopicRef
+			if err := rows.Scan(&item.TopicKey, &item.MessageID, &item.CreatedAt); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out = append(out, item)
+		}
+		rows.Close()
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func memoryWindowDays() int {
+	raw := strings.TrimSpace(os.Getenv("MEMORY_WINDOW_DAYS"))
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		if n > 60 {
+			return 60
+		}
+		return n
+	}
+	return 30
+}
+
+func memorySummaryMaxChars() int {
+	raw := strings.TrimSpace(os.Getenv("MEMORY_SUMMARY_MAX_CHARS"))
+	if n, err := strconv.Atoi(raw); err == nil && n >= 300 {
+		if n > 8000 {
+			return 8000
+		}
+		return n
+	}
+	return 1400
+}
+
+func memoryTopicsMax() int {
+	raw := strings.TrimSpace(os.Getenv("MEMORY_TOPICS_MAX"))
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		if n > 30 {
+			return 30
+		}
+		return n
+	}
+	return 12
+}
+
+func messageTopicKeys(content string, maxTopics int) []string {
+	if maxTopics <= 0 {
+		maxTopics = 8
+	}
+	stop := map[string]struct{}{
+		"this": {}, "that": {}, "with": {}, "from": {}, "have": {}, "just": {}, "your": {}, "what": {}, "about": {}, "there": {},
+		"were": {}, "been": {}, "they": {}, "them": {}, "then": {}, "also": {}, "into": {}, "when": {}, "will": {}, "would": {},
+		"как": {}, "что": {}, "это": {}, "там": {}, "для": {}, "или": {}, "его": {}, "она": {}, "они": {}, "тут": {},
+		"если": {}, "уже": {}, "надо": {}, "только": {}, "просто": {}, "тебя": {}, "меня": {}, "очень": {}, "где": {}, "когда": {},
+	}
+	words := regexp.MustCompile(`[a-zа-я0-9_]{4,}`).FindAllString(strings.ToLower(content), -1)
+	if len(words) == 0 {
+		return nil
+	}
+	freq := map[string]int{}
+	for _, w := range words {
+		if _, banned := stop[w]; banned {
+			continue
+		}
+		freq[w]++
+	}
+	type kv struct {
+		K string
+		V int
+	}
+	items := make([]kv, 0, len(freq))
+	for k, v := range freq {
+		items = append(items, kv{K: k, V: v})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].V == items[j].V {
+			return items[i].K < items[j].K
+		}
+		return items[i].V > items[j].V
+	})
+	out := make([]string, 0, maxTopics)
+	for _, it := range items {
+		out = append(out, it.K)
+		if len(out) >= maxTopics {
+			break
+		}
+	}
+	return out
+}
+
+func indexMessageTopicRefs(msg *Message) {
+	if msg == nil {
+		return
+	}
+	topics := messageTopicKeys(msg.Content, memoryTopicsMax())
+	for _, t := range topics {
+		_ = store.upsertTopicRef(msg.ChatID, t, msg.ID, msg.CreatedAt.UTC())
+	}
+}
+
+func buildTopicContext(chatID, currentContent string, now time.Time) []llmHistoryItem {
+	queryTopics := messageTopicKeys(currentContent, 6)
+	if len(queryTopics) == 0 {
+		return nil
+	}
+	windowDays := memoryWindowDays()
+	since := now.UTC().AddDate(0, 0, -windowDays)
+	refs, err := store.listTopicRefs(chatID, queryTopics, since, 2)
+	if err != nil || len(refs) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]llmHistoryItem, 0, 8)
+	for _, ref := range refs {
+		if len(out) >= 8 {
+			break
+		}
+		if _, ok := seen[ref.MessageID]; ok {
+			continue
+		}
+		seen[ref.MessageID] = struct{}{}
+		msg, err := store.getMessageByID(ref.MessageID)
+		if err != nil || msg == nil {
+			continue
+		}
+		content := strings.TrimSpace(msg.Content)
+		if content == "" || content == "LLM is busy, try later." {
+			continue
+		}
+		out = append(out, llmHistoryItem{
+			Sender:  msg.Sender,
+			Content: content,
+		})
+	}
+	return out
 }
 
 func (s *Store) getMessageByID(messageID string) (*Message, error) {
@@ -1172,7 +1613,10 @@ func accessTTL() time.Duration {
 	if raw == "" {
 		return time.Duration(defaultAccessTTLMinutes) * time.Minute
 	}
-	if v, err := time.ParseDuration(raw + "m"); err == nil {
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		return time.Duration(n) * time.Minute
+	}
+	if v, err := time.ParseDuration(raw); err == nil {
 		return v
 	}
 	return time.Duration(defaultAccessTTLMinutes) * time.Minute
@@ -1183,7 +1627,10 @@ func refreshTTL() time.Duration {
 	if raw == "" {
 		return time.Duration(defaultRefreshTTLDays) * 24 * time.Hour
 	}
-	if v, err := time.ParseDuration(raw + "h"); err == nil {
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		return time.Duration(n) * 24 * time.Hour
+	}
+	if v, err := time.ParseDuration(raw); err == nil {
 		return v
 	}
 	return time.Duration(defaultRefreshTTLDays) * 24 * time.Hour
@@ -1591,13 +2038,16 @@ func processLLMJob(job LLMJob) error {
 		return fmt.Errorf("chat not found")
 	}
 
+	history := buildLLMHistory(job.ChatID, 16)
+	topicContext := buildTopicContext(job.ChatID, job.Content, time.Now().UTC())
+	memory := llmMemory{}
 	callOnce := func() (string, int, string, error) {
 		llmBase := os.Getenv("LLM_BASE")
-		resp, status, body, err := callLLM(llmBase, job.ChatID, job.Persona, job.Content)
+		resp, status, body, err := callLLM(llmBase, job.ChatID, job.Persona, job.PersonaPrompt, job.Content, history, topicContext, memory)
 		if err != nil || strings.TrimSpace(resp) == "" {
 			log.Printf("llm_error req_id=%s chat_id=%s status=%d err=%v body=%s", job.RequestID, job.ChatID, status, err, body)
 			time.Sleep(2 * time.Second)
-			resp, status, body, err = callLLM(llmBase, job.ChatID, job.Persona, job.Content)
+			resp, status, body, err = callLLM(llmBase, job.ChatID, job.Persona, job.PersonaPrompt, job.Content, history, topicContext, memory)
 		}
 		if err != nil || strings.TrimSpace(resp) == "" {
 			log.Printf("llm_error_final req_id=%s chat_id=%s status=%d err=%v body=%s", job.RequestID, job.ChatID, status, err, body)
@@ -1628,6 +2078,8 @@ func processLLMJob(job LLMJob) error {
 			return err
 		}
 		if updated != nil {
+			hist.append(job.ChatID, "admin", updated.Content)
+			indexMessageTopicRefs(updated)
 			publishEvent(ChatEvent{
 				Type:           "message_updated",
 				ChatID:         job.ChatID,
@@ -1643,6 +2095,8 @@ func processLLMJob(job LLMJob) error {
 	if err != nil {
 		return err
 	}
+	hist.append(job.ChatID, "admin", reply.Content)
+	indexMessageTopicRefs(reply)
 	_ = store.updateChatLastMessage(job.ChatID, reply.CreatedAt)
 	updatedChat, err := store.getChatByID(job.ChatID)
 	if err == nil && updatedChat != nil {
@@ -1657,6 +2111,311 @@ func processLLMJob(job LLMJob) error {
 		LastMessageAt:  reply.CreatedAt.Format(time.RFC3339),
 	})
 	return nil
+}
+
+func buildLLMHistory(chatID string, limit int) []llmHistoryItem {
+	if limit <= 0 {
+		limit = 16
+	}
+	if cached := hist.get(chatID, limit); len(cached) > 0 {
+		return cached
+	}
+	msgs, err := store.listMessages(chatID)
+	if err != nil || len(msgs) == 0 {
+		return nil
+	}
+	hist.setFromMessages(chatID, msgs, runtimeHistoryMax())
+	out := make([]llmHistoryItem, 0, limit)
+	start := 0
+	if len(msgs) > limit {
+		start = len(msgs) - limit
+	}
+	for i := start; i < len(msgs); i++ {
+		m := msgs[i]
+		if m == nil {
+			continue
+		}
+		content := strings.TrimSpace(m.Content)
+		if content == "" || content == "LLM is busy, try later." {
+			continue
+		}
+		out = append(out, llmHistoryItem{
+			Sender:  m.Sender,
+			Content: content,
+		})
+	}
+	return out
+}
+
+func extractTopTopicsFromMessages(msgs []*Message, maxTopics int) []string {
+	if maxTopics <= 0 {
+		maxTopics = 8
+	}
+	stop := map[string]struct{}{
+		"this": {}, "that": {}, "with": {}, "from": {}, "have": {}, "just": {}, "your": {}, "what": {}, "about": {}, "there": {},
+		"were": {}, "been": {}, "they": {}, "them": {}, "then": {}, "also": {}, "into": {}, "when": {}, "will": {}, "would": {},
+		"как": {}, "что": {}, "это": {}, "там": {}, "для": {}, "или": {}, "его": {}, "она": {}, "они": {}, "тут": {},
+		"если": {}, "уже": {}, "надо": {}, "только": {}, "просто": {}, "тебя": {}, "меня": {}, "очень": {}, "где": {}, "когда": {},
+	}
+	freq := map[string]int{}
+	for _, m := range msgs {
+		if m == nil {
+			continue
+		}
+		text := strings.ToLower(m.Content)
+		words := regexp.MustCompile(`[a-zа-я0-9_]{4,}`).FindAllString(text, -1)
+		for _, w := range words {
+			if _, banned := stop[w]; banned {
+				continue
+			}
+			freq[w]++
+		}
+	}
+	if len(freq) == 0 {
+		return nil
+	}
+	type kv struct {
+		K string
+		V int
+	}
+	items := make([]kv, 0, len(freq))
+	for k, v := range freq {
+		items = append(items, kv{K: k, V: v})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].V == items[j].V {
+			return items[i].K < items[j].K
+		}
+		return items[i].V > items[j].V
+	})
+	out := make([]string, 0, maxTopics)
+	for _, it := range items {
+		out = append(out, it.K)
+		if len(out) >= maxTopics {
+			break
+		}
+	}
+	return out
+}
+
+func buildDailyMemory(chatID string, now time.Time) llmMemory {
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	msgs, err := store.listMessagesSince(chatID, startOfDay, 240)
+	if err != nil || len(msgs) == 0 {
+		return llmMemory{}
+	}
+	return buildMemoryFromMessages(msgs)
+}
+
+func buildMemoryFromMessages(msgs []*Message) llmMemory {
+	if len(msgs) == 0 {
+		return llmMemory{}
+	}
+	clientTurns := 0
+	adminTurns := 0
+	lastClient := ""
+	lastAdmin := ""
+	for _, m := range msgs {
+		if m == nil {
+			continue
+		}
+		content := strings.TrimSpace(m.Content)
+		if content == "" || content == "LLM is busy, try later." {
+			continue
+		}
+		if m.Sender == "client" {
+			clientTurns++
+			lastClient = content
+		} else if m.Sender == "admin" {
+			adminTurns++
+			lastAdmin = content
+		}
+	}
+	topics := extractTopTopicsFromMessages(msgs, 8)
+
+	summaryParts := []string{
+		fmt.Sprintf("Today in this chat: user turns %d, assistant turns %d.", clientTurns, adminTurns),
+	}
+	if len(topics) > 0 {
+		summaryParts = append(summaryParts, fmt.Sprintf("Main topics: %s.", strings.Join(topics, ", ")))
+	}
+	if lastClient != "" {
+		summaryParts = append(summaryParts, fmt.Sprintf("Latest user point: %s", firstLine(lastClient, 140)))
+	}
+	if lastAdmin != "" {
+		summaryParts = append(summaryParts, fmt.Sprintf("Latest assistant point: %s", firstLine(lastAdmin, 140)))
+	}
+
+	summary := strings.Join(summaryParts, " ")
+	return llmMemory{
+		Summary: summary,
+		Topics:  topics,
+	}
+}
+
+func getOrBuildDailyMemory(chatID string, now time.Time) llmMemory {
+	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	if existing, err := store.getChatMemory(chatID, day); err == nil && existing != nil {
+		return *existing
+	}
+	mem := buildDailyMemory(chatID, now)
+	if mem.Summary != "" || len(mem.Topics) > 0 {
+		_ = store.upsertChatMemory(chatID, day, mem)
+	}
+	return mem
+}
+
+func trimMemorySummary(summary string, maxChars int) string {
+	s := strings.TrimSpace(summary)
+	if maxChars <= 0 || len(s) <= maxChars {
+		return s
+	}
+	if maxChars <= 3 {
+		return s[:maxChars]
+	}
+	return strings.TrimSpace(s[:maxChars-3]) + "..."
+}
+
+func composeRollingMemory(rows []llmMemoryRow, summaryLimit int, topicsLimit int) llmMemory {
+	if len(rows) == 0 {
+		return llmMemory{}
+	}
+	summaryParts := make([]string, 0, len(rows))
+	topicFreq := map[string]int{}
+	for _, row := range rows {
+		summary := strings.TrimSpace(row.Memory.Summary)
+		if summary != "" {
+			summaryParts = append(summaryParts, fmt.Sprintf("%s: %s", row.DayDate, summary))
+		}
+		for _, t := range row.Memory.Topics {
+			tt := strings.TrimSpace(strings.ToLower(t))
+			if tt == "" {
+				continue
+			}
+			topicFreq[tt]++
+		}
+	}
+	combined := trimMemorySummary(strings.Join(summaryParts, " "), summaryLimit)
+	type kv struct {
+		K string
+		V int
+	}
+	items := make([]kv, 0, len(topicFreq))
+	for k, v := range topicFreq {
+		items = append(items, kv{K: k, V: v})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].V == items[j].V {
+			return items[i].K < items[j].K
+		}
+		return items[i].V > items[j].V
+	})
+	topics := make([]string, 0, topicsLimit)
+	for _, it := range items {
+		topics = append(topics, it.K)
+		if len(topics) >= topicsLimit {
+			break
+		}
+	}
+	return llmMemory{
+		Summary: combined,
+		Topics:  topics,
+	}
+}
+
+func getOrBuildRollingMemory(chatID string, now time.Time) llmMemory {
+	_ = getOrBuildDailyMemory(chatID, now)
+	windowDays := memoryWindowDays()
+	since := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(windowDays - 1))
+	rows, err := store.listChatMemoriesSince(chatID, since, windowDays)
+	if err != nil || len(rows) == 0 {
+		return getOrBuildDailyMemory(chatID, now)
+	}
+	return composeRollingMemory(rows, memorySummaryMaxChars(), memoryTopicsMax())
+}
+
+func backfillTopicRefs() int {
+	chats, err := store.listAllChats()
+	if err != nil {
+		log.Printf("topic_ref_backfill_error stage=list_chats err=%v", err)
+		return 0
+	}
+	updated := 0
+	for _, chat := range chats {
+		if chat == nil || strings.TrimSpace(chat.ID) == "" {
+			continue
+		}
+		msgs, err := store.listMessages(chat.ID)
+		if err != nil {
+			log.Printf("topic_ref_backfill_error chat_id=%s stage=list_messages err=%v", chat.ID, err)
+			continue
+		}
+		if len(msgs) == 0 {
+			continue
+		}
+		for _, m := range msgs {
+			if m == nil {
+				continue
+			}
+			topics := messageTopicKeys(m.Content, memoryTopicsMax())
+			for _, t := range topics {
+				if err := store.upsertTopicRef(chat.ID, t, m.ID, m.CreatedAt.UTC()); err != nil {
+					log.Printf("topic_ref_backfill_error chat_id=%s message_id=%s topic=%s err=%v", chat.ID, m.ID, t, err)
+					continue
+				}
+				updated++
+			}
+		}
+	}
+	log.Printf("topic_ref_backfill_done chats=%d refs=%d", len(chats), updated)
+	return updated
+}
+
+func backfillChatMemories() int {
+	chats, err := store.listAllChats()
+	if err != nil {
+		log.Printf("memory_backfill_error stage=list_chats err=%v", err)
+		return 0
+	}
+	updated := 0
+	for _, chat := range chats {
+		if chat == nil || strings.TrimSpace(chat.ID) == "" {
+			continue
+		}
+		msgs, err := store.listMessages(chat.ID)
+		if err != nil {
+			log.Printf("memory_backfill_error chat_id=%s stage=list_messages err=%v", chat.ID, err)
+			continue
+		}
+		if len(msgs) == 0 {
+			continue
+		}
+		byDay := map[string][]*Message{}
+		for _, m := range msgs {
+			if m == nil {
+				continue
+			}
+			day := m.CreatedAt.UTC().Format("2006-01-02")
+			byDay[day] = append(byDay[day], m)
+		}
+		for day, dayMsgs := range byDay {
+			parsedDay, err := time.ParseInLocation("2006-01-02", day, time.UTC)
+			if err != nil {
+				continue
+			}
+			mem := buildMemoryFromMessages(dayMsgs)
+			if mem.Summary == "" && len(mem.Topics) == 0 {
+				continue
+			}
+			if err := store.upsertChatMemory(chat.ID, parsedDay, mem); err != nil {
+				log.Printf("memory_backfill_error chat_id=%s day=%s stage=upsert err=%v", chat.ID, day, err)
+				continue
+			}
+			updated++
+		}
+	}
+	log.Printf("memory_backfill_done chats=%d entries=%d", len(chats), updated)
+	return updated
 }
 
 func runWorker(ctx context.Context) error {
@@ -2031,6 +2790,26 @@ func main() {
 		return
 	}
 
+	if strings.TrimSpace(strings.ToLower(os.Getenv("MEMORY_BACKFILL_ON_START"))) != "false" {
+		force := strings.TrimSpace(strings.ToLower(os.Getenv("MEMORY_BACKFILL_FORCE"))) == "true"
+		if !force {
+			if value, ok, err := store.getSystemFlag("topic_ref_backfill_v1_done"); err != nil {
+				log.Printf("memory_backfill_check_error err=%v", err)
+			} else if ok && value == "1" {
+				log.Print("topic ref backfill skipped (already completed)")
+				goto skipMemoryBackfill
+			}
+		}
+		log.Print("topic ref backfill started")
+		refs := backfillTopicRefs()
+		if err := store.setSystemFlag("topic_ref_backfill_v1_done", "1"); err != nil {
+			log.Printf("topic_ref_backfill_flag_error err=%v", err)
+		} else {
+			log.Printf("topic ref backfill marked complete refs=%d", refs)
+		}
+	}
+skipMemoryBackfill:
+
 	googleCfg := googleConfig{
 		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
 		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
@@ -2077,14 +2856,18 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-func callLLM(baseURL, chatID, persona, content string) (string, int, string, error) {
+func callLLM(baseURL, chatID, persona, personaPrompt, content string, history []llmHistoryItem, topicContext []llmHistoryItem, memory llmMemory) (string, int, string, error) {
 	if strings.TrimSpace(baseURL) == "" {
 		return "", 0, "", fmt.Errorf("llm base not set")
 	}
 	payload := jsonMap{
-		"chat_id": chatID,
-		"persona": persona,
-		"content": content,
+		"chat_id":        chatID,
+		"persona":        persona,
+		"persona_prompt": personaPrompt,
+		"content":        content,
+		"history":        history,
+		"topic_context":  topicContext,
+		"memory":         memory,
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/respond", strings.NewReader(string(body)))
@@ -3096,6 +3879,8 @@ func handleAdminSendMessage(w http.ResponseWriter, r *http.Request, chatID strin
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
 	}
+	hist.append(chatID, "admin", msg.Content)
+	indexMessageTopicRefs(msg)
 	_ = store.updateChatLastMessage(chatID, msg.CreatedAt)
 	publishEvent(ChatEvent{
 		Type:           "message_created",
@@ -3273,8 +4058,9 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 		reqID = nextID("req")
 	}
 	var req struct {
-		Content string `json:"content"`
-		Persona string `json:"persona"`
+		Content       string `json:"content"`
+		Persona       string `json:"persona"`
+		PersonaPrompt string `json:"persona_prompt"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "content required"})
@@ -3301,6 +4087,7 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
 	} else if dup != nil {
+		hist.append(chatID, "client", dup.Content)
 		log.Printf("chat_send dedup req_id=%s chat_id=%s latency_ms=%d", reqID, chatID, time.Since(start).Milliseconds())
 		writeJSON(w, http.StatusOK, dup)
 		return
@@ -3311,6 +4098,8 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
 	}
+	hist.append(chatID, "client", msg.Content)
+	indexMessageTopicRefs(msg)
 	_ = store.updateChatUnread(chatID, chat.UnreadForAdmin+1)
 	_ = store.updateChatLastMessage(chatID, msg.CreatedAt)
 	if strings.TrimSpace(chat.Title) == "" {
@@ -3335,12 +4124,13 @@ func handleChatSendMessage(w http.ResponseWriter, r *http.Request, chatID string
 		}
 	}
 	job := LLMJob{
-		ChatID:    chatID,
-		Persona:   persona,
-		Content:   content,
-		RequestID: reqID,
-		Source:    "client_send",
-		Attempts:  0,
+		ChatID:        chatID,
+		Persona:       persona,
+		PersonaPrompt: strings.TrimSpace(req.PersonaPrompt),
+		Content:       content,
+		RequestID:     reqID,
+		Source:        "client_send",
+		Attempts:      0,
 	}
 	if err := enqueueLLMJob(job); err != nil {
 		go func(j LLMJob) {

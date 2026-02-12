@@ -14,19 +14,25 @@ import lbj from '../../assets/LyndonBJohnson.png';
 import zuck from '../../assets/MarkZuckerberg.png';
 import epstein from '../../assets/JeffreyEpstein.png';
 import { ChatItem, createChat, sendMessage } from '../lib/api';
+import { PERSONA_NAMES } from '../lib/personaPrompts';
 
-const personas = [
-  { name: 'Donald Trump', avatar: trump },
-  { name: 'Elon Musk', avatar: musk },
-  { name: 'Kanye West', avatar: kanye },
-  { name: 'Richard Nixon', avatar: nixon },
-  { name: 'Andrew Jackson', avatar: jackson },
-  { name: 'Marjorie Taylor Greene', avatar: greene },
-  { name: 'Tucker Carlson', avatar: tucker },
-  { name: 'Lyndon B. Johnson', avatar: lbj },
-  { name: 'Mark Zuckerberg', avatar: zuck },
-  { name: 'Jeffrey Epstein', avatar: epstein },
-];
+const personaAvatarByName: Record<string, number> = {
+  'Donald Trump': trump,
+  'Elon Musk': musk,
+  'Kanye West': kanye,
+  'Richard Nixon': nixon,
+  'Andrew Jackson': jackson,
+  'Marjorie Taylor Greene': greene,
+  'Tucker Carlson': tucker,
+  'Lyndon B. Johnson': lbj,
+  'Mark Zuckerberg': zuck,
+  'Jeffrey Epstein': epstein,
+};
+
+const personas = PERSONA_NAMES.map((name) => ({
+  name,
+  avatar: personaAvatarByName[name] ?? trump,
+}));
 
 function MoonIcon({ color }: { color: string }) {
   return (
