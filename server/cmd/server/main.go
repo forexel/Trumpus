@@ -3025,23 +3025,46 @@ func main() {
 
 	if strings.TrimSpace(strings.ToLower(os.Getenv("MEMORY_BACKFILL_ON_START"))) != "false" {
 		force := strings.TrimSpace(strings.ToLower(os.Getenv("MEMORY_BACKFILL_FORCE"))) == "true"
-		if !force {
+		runTopicBackfill := force
+		if !runTopicBackfill {
 			if value, ok, err := store.getSystemFlag("topic_ref_backfill_v1_done"); err != nil {
 				log.Printf("memory_backfill_check_error err=%v", err)
-			} else if ok && value == "1" {
-				log.Print("topic ref backfill skipped (already completed)")
-				goto skipMemoryBackfill
+			} else if !ok || value != "1" {
+				runTopicBackfill = true
 			}
 		}
-		log.Print("topic ref backfill started")
-		refs := backfillTopicRefs()
-		if err := store.setSystemFlag("topic_ref_backfill_v1_done", "1"); err != nil {
-			log.Printf("topic_ref_backfill_flag_error err=%v", err)
+		if runTopicBackfill {
+			log.Print("topic ref backfill started")
+			refs := backfillTopicRefs()
+			if err := store.setSystemFlag("topic_ref_backfill_v1_done", "1"); err != nil {
+				log.Printf("topic_ref_backfill_flag_error err=%v", err)
+			} else {
+				log.Printf("topic ref backfill marked complete refs=%d", refs)
+			}
 		} else {
-			log.Printf("topic ref backfill marked complete refs=%d", refs)
+			log.Print("topic ref backfill skipped (already completed)")
+		}
+
+		runMemoryBackfill := force
+		if !runMemoryBackfill {
+			if value, ok, err := store.getSystemFlag("chat_memory_backfill_v1_done"); err != nil {
+				log.Printf("chat_memory_backfill_check_error err=%v", err)
+			} else if !ok || value != "1" {
+				runMemoryBackfill = true
+			}
+		}
+		if runMemoryBackfill {
+			log.Print("chat memory backfill started")
+			entries := backfillChatMemories()
+			if err := store.setSystemFlag("chat_memory_backfill_v1_done", "1"); err != nil {
+				log.Printf("chat_memory_backfill_flag_error err=%v", err)
+			} else {
+				log.Printf("chat memory backfill marked complete entries=%d", entries)
+			}
+		} else {
+			log.Print("chat memory backfill skipped (already completed)")
 		}
 	}
-skipMemoryBackfill:
 
 	googleCfg := googleConfig{
 		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),

@@ -923,6 +923,53 @@ def is_gibberish(text: str) -> bool:
     return False
 
 
+def is_short_affirmation(text: str) -> bool:
+    t = re.sub(r"[^\wа-яА-Я]+", "", text.strip().lower())
+    return t in {"yes", "yeah", "yep", "ok", "okay", "sure", "да", "ага", "угу", "ок", "конечно"}
+
+
+def find_last_admin_question(history: list[dict[str, str]]) -> str:
+    for item in reversed(history):
+        if str(item.get("sender", "")).strip().lower() != "admin":
+            continue
+        content = str(item.get("content", "")).strip()
+        if "?" in content:
+            return content
+    return ""
+
+
+def extract_keywords(text: str, max_items: int = 4) -> list[str]:
+    words = re.findall(r"[a-zа-я0-9_]{4,}", text.lower())
+    if not words:
+        return []
+    stop = {
+        "this", "that", "with", "from", "have", "just", "your", "what", "about", "there",
+        "were", "been", "they", "them", "then", "also", "into", "when", "will", "would",
+        "what's", "yours", "yourself",
+        "как", "что", "это", "там", "для", "или", "его", "она", "они", "тут",
+        "если", "уже", "надо", "только", "просто", "тебя", "меня", "очень", "где", "когда",
+        "твой", "твоя", "твое", "твои",
+    }
+    out: list[str] = []
+    seen: set[str] = set()
+    for w in words:
+        if w in stop or w in seen:
+            continue
+        seen.add(w)
+        out.append(w)
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def is_contextual_elliptic_question(text: str) -> bool:
+    t = text.strip().lower()
+    return bool(
+        re.fullmatch(r"(and\s+yours\??|and\s+what\s+about\s+yours\??)", t)
+        or re.fullmatch(r"(а\s+твой\??|а\s+твоя\??|а\s+твое\??|а\s+твои\??|а\s+как\s+насчет\s+твоего\??)", t)
+    )
+
+
 def is_weather(text: str) -> bool:
     t = text.lower()
     return bool(re.search(r"\b(weather|temperature|rain|snow|forecast|погода|дожд|снег|температур)\b", t))
@@ -1315,7 +1362,19 @@ async def build_router_and_plan(
             frequency_penalty=0.0,
         )
         router = parse_router_output(router_raw, content)
-    if is_gibberish(content):
+    last_admin_question = find_last_admin_question(history)
+    if last_admin_question and (is_short_affirmation(content) or is_contextual_elliptic_question(content)):
+        router.primary_intent = "direct_question"
+        router.secondary_intents = []
+        router.verbosity_level = "S"
+        router.clarifying_question_required = False
+        router.clarifying_question = ""
+        router.initiative_recommended = False
+        router.initiative_type = "none"
+        router.humor_suitable = False
+        router.user_tone = "friendly"
+        router.topic_keywords = extract_keywords(last_admin_question, max_items=4)
+    elif is_gibberish(content):
         router.primary_intent = "low_info"
         router.secondary_intents = []
         router.verbosity_level = "XS"
