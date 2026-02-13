@@ -868,7 +868,7 @@ def router_fallback(user_text: str) -> RouterResult:
     if not words:
         return RouterResult(primary_intent="low_info", verbosity_level="XS", clarifying_question_required=True, user_tone="confused")
 
-    has_question = "?" in text
+    has_question = has_question_intent(text)
     has_greeting = bool(re.search(r"\b(hi|hello|hey|привет|здравствуй)\b", text.lower()))
     primary_intent = "direct_question" if has_question else "small_talk"
     if len(words) <= 2:
@@ -1032,6 +1032,18 @@ def is_memory_recall_question(text: str) -> bool:
     )
 
 
+def has_question_intent(text: str) -> bool:
+    t = text.strip().lower()
+    if not t:
+        return False
+    if "?" in t:
+        return True
+    return bool(
+        re.search(r"\b(what|why|how|when|where|who|which|remember|recap|summarize|tell me|can you|do you)\b", t)
+        or re.search(r"\b(что|как|почему|зачем|когда|где|кто|какой|какая|какое|какие|помнишь|напомни|перескажи|расскажи|объясни)\b", t)
+    )
+
+
 def is_personal_life_question(text: str) -> bool:
     t = text.lower()
     return bool(
@@ -1096,6 +1108,11 @@ def clamped_verbosity(level: str, profile: dict[str, float], primary_intent: str
     if primary_intent == "ask_to_tell":
         if current in {"XS", "S", "M"}:
             return "L"
+        return current
+    # Questions should not collapse into one-liners.
+    if primary_intent in {"direct_question", "how_to", "decision_help", "advice_request", "career_coaching", "money_talk", "emotional_support"}:
+        if current == "XS":
+            current = "S"
         return current
     if patience < 0.4:
         idx = max(0, VERBOSITY_ORDER.index(current) - 1)
@@ -1443,7 +1460,7 @@ async def build_router_and_plan(
 
     # Mixed-intent guardrail: if text includes a real question, do not collapse to greeting.
     lowered_content = content.lower()
-    has_question = "?" in content
+    has_question = has_question_intent(content)
     has_greeting = bool(re.search(r"\b(hi|hello|hey|привет|здравствуй)\b", lowered_content))
     if has_question and (has_greeting or router.primary_intent in {"greeting", "small_talk", "thanks", "farewell"}):
         if router.primary_intent != "direct_question":
@@ -1470,7 +1487,7 @@ async def build_router_and_plan(
     elif is_memory_recall_question(content):
         router.primary_intent = "direct_question"
         router.secondary_intents = []
-        router.verbosity_level = "S"
+        router.verbosity_level = "M"
         router.clarifying_question_required = False
         router.clarifying_question = ""
         router.initiative_recommended = False
