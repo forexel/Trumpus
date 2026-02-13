@@ -178,32 +178,46 @@ export default function ChatDetailPage() {
 
   async function onSend() {
     if (!text.trim() || !chatId || typing || sending || pendingAIRef.current) return
-    
-    // Сразу блокируем повторную отправку
+
+    // Lock sending immediately and render optimistic client message.
     pendingAIRef.current = true
     setSending(true)
-    const content = text
-    setText('')
-    
-    const msg = await sendMessage(chatId, content, personaName)
-    const updatedMessages = [...messages, msg]
-    setMessages(updatedMessages)
-    
-    // Update title if first message
-    if (!chat?.title) {
-      const newTitle = makeChatTitle(content)
-      updateChatTitle(chatId, newTitle)
-      setChat(prev => prev ? { ...prev, title: newTitle } : prev)
+    const content = text.trim()
+    const tempId = `tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    const optimisticMessage: Message = {
+      id: tempId,
+      chat_id: chatId,
+      sender: 'client',
+      content,
+      created_at: new Date().toISOString(),
     }
-    
-    // Get AI response
-    setTyping(true)
-    setSending(false)
-    
-    // Wait for LLM response via WS (fallback to polling if disconnected)
-    if (!wsConnected) {
-      pollingTokenRef.current += 1
-      pollForAI(chatId, updatedMessages.length)
+    setText('')
+    setMessages(prev => [...prev, optimisticMessage])
+
+    try {
+      const msg = await sendMessage(chatId, content, personaName)
+      setMessages(prev => prev.map(item => (item.id === tempId ? msg : item)))
+
+      // Update title if first user message in this chat.
+      if (!chat?.title) {
+        const newTitle = makeChatTitle(content)
+        updateChatTitle(chatId, newTitle)
+        setChat(prev => prev ? { ...prev, title: newTitle } : prev)
+      }
+
+      setTyping(true)
+      if (!wsConnected) {
+        pollingTokenRef.current += 1
+        pollForAI(chatId, messages.length + 1)
+      }
+    } catch {
+      // Roll back optimistic message and let user retry quickly.
+      setMessages(prev => prev.filter(item => item.id !== tempId))
+      setText(content)
+      pendingAIRef.current = false
+      setTyping(false)
+    } finally {
+      setSending(false)
     }
   }
 
