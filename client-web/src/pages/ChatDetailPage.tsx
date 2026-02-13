@@ -56,6 +56,8 @@ export default function ChatDetailPage() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const pendingAIRef = useRef(false)
+  const pendingClientTempIdRef = useRef<string | null>(null)
+  const pendingClientContentRef = useRef<string | null>(null)
   const pollingActiveRef = useRef(true)
   const pollingTokenRef = useRef(0)
   const { theme, toggleTheme } = useTheme()
@@ -134,6 +136,25 @@ export default function ChatDetailPage() {
         if (!incoming) return
         setMessages((prev) => {
           if (prev.some((m) => m.id === incoming.id)) return prev
+          if (incoming.sender === 'client' && pendingClientTempIdRef.current) {
+            const tempId = pendingClientTempIdRef.current
+            const expectedContent = (pendingClientContentRef.current || '').trim()
+            const tempIndex = prev.findIndex((m) => m.id === tempId)
+            if (tempIndex >= 0) {
+              const tempMsg = prev[tempIndex]
+              if (
+                tempMsg.sender === 'client'
+                && tempMsg.content.trim() === expectedContent
+                && incoming.content.trim() === expectedContent
+              ) {
+                const next = [...prev]
+                next[tempIndex] = incoming
+                pendingClientTempIdRef.current = null
+                pendingClientContentRef.current = null
+                return next
+              }
+            }
+          }
           return [...prev, incoming]
         })
         if (incoming.sender === 'admin') {
@@ -191,6 +212,8 @@ export default function ChatDetailPage() {
       content,
       created_at: new Date().toISOString(),
     }
+    pendingClientTempIdRef.current = tempId
+    pendingClientContentRef.current = content
     setText('')
     setMessages(prev => [...prev, optimisticMessage])
 
@@ -201,8 +224,12 @@ export default function ChatDetailPage() {
         if (hasRealAlready) {
           // WS may deliver the real client message before sendMessage resolves.
           // In that case just drop the optimistic placeholder.
+          pendingClientTempIdRef.current = null
+          pendingClientContentRef.current = null
           return prev.filter(item => item.id !== tempId)
         }
+        pendingClientTempIdRef.current = null
+        pendingClientContentRef.current = null
         return prev.map(item => (item.id === tempId ? msg : item))
       })
 
@@ -221,6 +248,8 @@ export default function ChatDetailPage() {
     } catch {
       // Roll back optimistic message and let user retry quickly.
       setMessages(prev => prev.filter(item => item.id !== tempId))
+      pendingClientTempIdRef.current = null
+      pendingClientContentRef.current = null
       setText(content)
       pendingAIRef.current = false
       setTyping(false)
