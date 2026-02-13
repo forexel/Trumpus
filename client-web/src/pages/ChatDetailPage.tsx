@@ -196,7 +196,15 @@ export default function ChatDetailPage() {
 
     try {
       const msg = await sendMessage(chatId, content, personaName)
-      setMessages(prev => prev.map(item => (item.id === tempId ? msg : item)))
+      setMessages(prev => {
+        const hasRealAlready = prev.some(item => item.id === msg.id)
+        if (hasRealAlready) {
+          // WS may deliver the real client message before sendMessage resolves.
+          // In that case just drop the optimistic placeholder.
+          return prev.filter(item => item.id !== tempId)
+        }
+        return prev.map(item => (item.id === tempId ? msg : item))
+      })
 
       // Update title if first user message in this chat.
       if (!chat?.title) {

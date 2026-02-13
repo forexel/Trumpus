@@ -2322,7 +2322,7 @@ func processLLMJob(job LLMJob) error {
 
 	history := buildLLMHistory(job.ChatID, 16)
 	topicContext := buildTopicContext(job.ChatID, job.Content, time.Now().UTC())
-	memory := llmMemory{}
+	memory := getOrBuildRollingMemory(job.ChatID, time.Now().UTC())
 	isRetriableLLMFailure := func(status int, callErr error) bool {
 		if status == 408 || status == 425 || status == 429 {
 			return true
