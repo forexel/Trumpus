@@ -143,6 +143,7 @@ GENERATOR_INTENT_BEHAVIOR = """Intent behaviors:
 - greeting/small_talk: be brief and reciprocal (ask 'and you?' if initiative).
 - weather_query: answer + relatable comment + ask about user's plans.
 - ask_to_tell: give a short self-intro in 2-3 paragraphs (L) and end with one question about what the user wants to know.
+- memory recall questions ("what did we talk about", "помнишь/о чем вчера"): summarize concrete points from LONG-TERM MEMORY and RECENT CONVERSATION in short bullets, do not dodge.
 - low_info or clarifying_question_required: do NOT riff. Ask exactly one clarification question.
 - personal_life_question: do not provide numbers or explicit details; use brief deflection + light humor + one redirect question."""
 
@@ -867,10 +868,12 @@ def router_fallback(user_text: str) -> RouterResult:
     if not words:
         return RouterResult(primary_intent="low_info", verbosity_level="XS", clarifying_question_required=True, user_tone="confused")
 
-    primary_intent = "direct_question" if "?" in text else "small_talk"
+    has_question = "?" in text
+    has_greeting = bool(re.search(r"\b(hi|hello|hey|привет|здравствуй)\b", text.lower()))
+    primary_intent = "direct_question" if has_question else "small_talk"
     if len(words) <= 2:
         primary_intent = "low_info"
-    if re.search(r"\b(hi|hello|hey|привет|здравствуй)\b", text.lower()):
+    if has_greeting and not has_question and not is_memory_recall_question(text):
         primary_intent = "greeting"
     if re.search(r"\b(bye|goodbye|пока)\b", text.lower()):
         primary_intent = "farewell"
@@ -886,6 +889,8 @@ def router_fallback(user_text: str) -> RouterResult:
         primary_intent = "weather_query"
     if is_personal_life_question(text):
         primary_intent = "personal_life_question"
+    if is_memory_recall_question(text):
+        primary_intent = "direct_question"
 
     reg = INTENT_REGISTRY.get(primary_intent, {})
     initiative_type = str(reg.get("initiative_type", "none"))
@@ -1019,6 +1024,14 @@ def is_weather(text: str) -> bool:
     return bool(re.search(r"\b(weather|temperature|rain|snow|forecast|погода|дожд|снег|температур)\b", t))
 
 
+def is_memory_recall_question(text: str) -> bool:
+    t = text.lower()
+    return bool(
+        re.search(r"\b(do you remember|remember|what did we talk|recap|summarize|you said)\b", t)
+        or re.search(r"(помнишь|напомни|о чем мы|вчера|перескажи|резюмируй|мы говорили)", t)
+    )
+
+
 def is_personal_life_question(text: str) -> bool:
     t = text.lower()
     return bool(
@@ -1034,16 +1047,8 @@ def is_identity_question(text: str) -> bool:
 
 
 def should_use_fast_router_path(text: str) -> bool:
-    words = re.findall(r"\w+", text.strip())
-    if not words:
-        return True
-    if len(words) <= 6:
-        return True
-    if is_gibberish(text) or is_weather(text) or is_personal_life_question(text):
-        return True
-    if re.search(r"\b(hi|hello|hey|привет|спасибо|thanks|ок|okay|лол|lol)\b", text.lower()):
-        return True
-    return False
+    # LLM-first routing: only empty input should skip semantic router.
+    return len(text.strip()) == 0
 
 
 def parse_router_output(raw: str, user_text: str) -> RouterResult:
@@ -1418,17 +1423,37 @@ async def build_router_and_plan(
             {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
             {"role": "user", "content": router_prompt},
         ]
-        router_raw, router_provider, router_model = await run_stage_completion(
-            chat_id=chat_id,
-            stage="router",
-            messages=router_messages,
-            max_tokens=220,
-            temperature=0.1,
-            top_p=1.0,
-            presence_penalty=0.0,
-            frequency_penalty=0.0,
-        )
-        router = parse_router_output(router_raw, content)
+        try:
+            router_raw, router_provider, router_model = await run_stage_completion(
+                chat_id=chat_id,
+                stage="router",
+                messages=router_messages,
+                max_tokens=220,
+                temperature=0.1,
+                top_p=1.0,
+                presence_penalty=0.0,
+                frequency_penalty=0.0,
+            )
+            router = parse_router_output(router_raw, content)
+        except LLMError:
+            router_raw = "router_error_fallback"
+            router_provider = "deterministic"
+            router_model = "local_rules"
+            router = router_fallback(content)
+
+    # Mixed-intent guardrail: if text includes a real question, do not collapse to greeting.
+    lowered_content = content.lower()
+    has_question = "?" in content
+    has_greeting = bool(re.search(r"\b(hi|hello|hey|привет|здравствуй)\b", lowered_content))
+    if has_question and (has_greeting or router.primary_intent in {"greeting", "small_talk", "thanks", "farewell"}):
+        if router.primary_intent != "direct_question":
+            secondary = [router.primary_intent] if router.primary_intent in INTENTS else []
+            router.secondary_intents = [i for i in secondary if i != "direct_question"]
+        router.primary_intent = "direct_question"
+        if router.verbosity_level == "XS":
+            router.verbosity_level = "S"
+        router.clarifying_question_required = False
+        router.clarifying_question = ""
     last_admin_question = find_last_admin_question(history)
     contextual_followup = bool(last_admin_question and (is_short_affirmation(content) or is_contextual_elliptic_question(content)))
     if contextual_followup:
@@ -1442,6 +1467,17 @@ async def build_router_and_plan(
         router.humor_suitable = False
         router.user_tone = "friendly"
         router.topic_keywords = extract_keywords(last_admin_question, max_items=4)
+    elif is_memory_recall_question(content):
+        router.primary_intent = "direct_question"
+        router.secondary_intents = []
+        router.verbosity_level = "S"
+        router.clarifying_question_required = False
+        router.clarifying_question = ""
+        router.initiative_recommended = False
+        router.initiative_type = "none"
+        router.humor_suitable = False
+        router.user_tone = "neutral"
+        router.topic_keywords = extract_keywords(content, max_items=4)
     elif is_gibberish(content):
         router.primary_intent = "low_info"
         router.secondary_intents = []

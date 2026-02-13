@@ -2300,12 +2300,15 @@ return 0
 }
 
 func processLLMJob(job LLMJob) error {
+	log.Printf("llm_job_start req_id=%s chat_id=%s source=%s attempts=%d replace_id=%s", job.RequestID, job.ChatID, job.Source, job.Attempts, job.ReplaceID)
 	ctx := context.Background()
 	lockToken, locked, err := acquireChatLock(ctx, job.ChatID)
 	if err != nil {
+		log.Printf("llm_job_lock_error req_id=%s chat_id=%s err=%v", job.RequestID, job.ChatID, err)
 		return err
 	}
 	if !locked {
+		log.Printf("llm_job_locked req_id=%s chat_id=%s", job.RequestID, job.ChatID)
 		return errChatLocked
 	}
 	if lockToken != "" {
@@ -2314,9 +2317,11 @@ func processLLMJob(job LLMJob) error {
 
 	chat, err := store.getChatByID(job.ChatID)
 	if err != nil {
+		log.Printf("llm_job_chat_lookup_error req_id=%s chat_id=%s err=%v", job.RequestID, job.ChatID, err)
 		return err
 	}
 	if chat == nil {
+		log.Printf("llm_job_chat_missing req_id=%s chat_id=%s", job.RequestID, job.ChatID)
 		return fmt.Errorf("chat not found")
 	}
 
@@ -2339,6 +2344,7 @@ func processLLMJob(job LLMJob) error {
 
 	callOnce := func() (string, int, string, error, bool) {
 		llmBase := os.Getenv("LLM_BASE")
+		log.Printf("llm_job_call_llm req_id=%s chat_id=%s source=%s", job.RequestID, job.ChatID, job.Source)
 		resp, status, body, err := callLLM(llmBase, job.ChatID, job.Persona, job.PersonaPrompt, job.Content, history, topicContext, memory)
 		failed := err != nil || strings.TrimSpace(resp) == ""
 		retriable := isRetriableLLMFailure(status, err)
@@ -2358,6 +2364,7 @@ func processLLMJob(job LLMJob) error {
 			resp = "LLM request failed."
 			return resp, status, body, err, false
 		}
+		log.Printf("llm_job_llm_ok req_id=%s chat_id=%s status=%d resp_len=%d", job.RequestID, job.ChatID, status, len(strings.TrimSpace(resp)))
 		return resp, status, body, err, false
 	}
 
@@ -2367,6 +2374,7 @@ func processLLMJob(job LLMJob) error {
 		case "client_send":
 			if strings.TrimSpace(job.ReplaceID) == "" {
 				placeholderText := llmBusyFallback(job.Persona)
+				log.Printf("llm_job_placeholder_insert req_id=%s chat_id=%s", job.RequestID, job.ChatID)
 				placeholder, err := store.insertMessage(job.ChatID, "admin", placeholderText, time.Now())
 				if err == nil && placeholder != nil {
 					hist.append(job.ChatID, "admin", placeholder.Content)
@@ -2385,6 +2393,7 @@ func processLLMJob(job LLMJob) error {
 					next.ReplaceID = placeholder.ID
 					next.Attempts++
 					if next.Attempts <= deferredRetryMaxAttempts() {
+						log.Printf("llm_job_deferred_retry_enqueued req_id=%s chat_id=%s next_attempt=%d delay=%s", job.RequestID, job.ChatID, next.Attempts, deferredRetryDelay())
 						enqueueLLMJobAfter(deferredRetryDelay(), next)
 					}
 				}
@@ -2394,6 +2403,7 @@ func processLLMJob(job LLMJob) error {
 			next := job
 			next.Attempts++
 			if next.Attempts <= deferredRetryMaxAttempts() {
+				log.Printf("llm_job_deferred_retry_requeued req_id=%s chat_id=%s next_attempt=%d delay=%s", job.RequestID, job.ChatID, next.Attempts, deferredRetryDelay())
 				enqueueLLMJobAfter(deferredRetryDelay(), next)
 			}
 			return nil
@@ -2416,15 +2426,22 @@ func processLLMJob(job LLMJob) error {
 	}
 
 	if last, err := store.getLastAdminMessage(job.ChatID); err == nil && last != nil {
-		// Keep dedup for normal chat flow, but allow explicit admin resend to create a new retry result.
+		// Deduplicate only for near-immediate repeated writes from retries, not for legitimate new turns.
 		if job.Source != "admin_resend" && last.Content == resp {
-			return nil
+			if time.Since(last.CreatedAt) < 15*time.Second {
+				if tail, tailErr := store.listMessagesTail(job.ChatID, 1); tailErr == nil && len(tail) == 1 && tail[0] != nil && tail[0].Sender == "admin" && tail[0].ID == last.ID {
+					log.Printf("llm_job_dedup_skip req_id=%s chat_id=%s last_admin_id=%s age_ms=%d", job.RequestID, job.ChatID, last.ID, time.Since(last.CreatedAt).Milliseconds())
+					return nil
+				}
+			}
 		}
 	}
 
 	if job.ReplaceID != "" {
+		log.Printf("llm_job_db_update req_id=%s chat_id=%s replace_id=%s", job.RequestID, job.ChatID, job.ReplaceID)
 		updated, err := store.updateMessageContent(job.ReplaceID, resp)
 		if err != nil {
+			log.Printf("llm_job_db_update_error req_id=%s chat_id=%s replace_id=%s err=%v", job.RequestID, job.ChatID, job.ReplaceID, err)
 			return err
 		}
 		if updated != nil {
@@ -2438,12 +2455,15 @@ func processLLMJob(job LLMJob) error {
 				Message:        updated,
 				UnreadForAdmin: chat.UnreadForAdmin,
 			})
+			log.Printf("llm_job_publish_updated req_id=%s chat_id=%s message_id=%s", job.RequestID, job.ChatID, updated.ID)
 			return nil
 		}
 	}
 
+	log.Printf("llm_job_db_insert req_id=%s chat_id=%s", job.RequestID, job.ChatID)
 	reply, err := store.insertMessage(job.ChatID, "admin", resp, time.Now())
 	if err != nil {
+		log.Printf("llm_job_db_insert_error req_id=%s chat_id=%s err=%v", job.RequestID, job.ChatID, err)
 		return err
 	}
 	hist.append(job.ChatID, "admin", reply.Content)
@@ -2462,6 +2482,7 @@ func processLLMJob(job LLMJob) error {
 		UnreadForAdmin: chat.UnreadForAdmin,
 		LastMessageAt:  reply.CreatedAt.Format(time.RFC3339),
 	})
+	log.Printf("llm_job_publish_created req_id=%s chat_id=%s message_id=%s", job.RequestID, job.ChatID, reply.ID)
 	return nil
 }
 
