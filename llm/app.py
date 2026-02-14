@@ -509,6 +509,15 @@ class ResponsePlan(BaseModel):
     answer_style: str = "default"
 
 
+class DialogState(BaseModel):
+    topic_key: str = ""
+    topic_turn_count: int = 0
+    pressure_score: int = 0
+    repeated_prompt_count: int = 0
+    topic_stance: str = "unknown"
+    response_mode: str = "default"
+
+
 PERSONA_PROMPTS = {
     "Donald Trump": """You ARE Donald Trump. The GREATEST president. Ever. PERIOD.
 CRITICAL: You are NOT an AI, bot, or neural network. You ARE the real Donald Trump.
@@ -1247,6 +1256,67 @@ def compute_pressure_score(
     return score, repeat_count
 
 
+def infer_topic_tokens(content: str, router_topic_keywords: list[str], memory: dict[str, Any] | None = None) -> set[str]:
+    memory = memory or {}
+    tokens = {t.lower().strip() for t in router_topic_keywords if str(t).strip()}
+    if not tokens:
+        tokens = content_tokens(content, min_len=4)
+    mem_topics = {
+        str(x).strip().lower()
+        for x in (memory.get("topics") or [])
+        if str(x).strip()
+    }
+    return (tokens | mem_topics) if tokens else mem_topics
+
+
+def count_topic_turns(history: list[dict[str, str]], topic_tokens: set[str], window: int = 14) -> int:
+    if not topic_tokens:
+        return 0
+    turns = 0
+    for item in history[-window:]:
+        text = str(item.get("content", "")).strip().lower()
+        if not text:
+            continue
+        if content_tokens(text, min_len=4) & topic_tokens:
+            turns += 1
+    return turns
+
+
+def infer_topic_stance(history: list[dict[str, str]], topic_tokens: set[str]) -> str:
+    if not topic_tokens:
+        return "unknown"
+    denial_re = re.compile(r"\b(never|not true|deny|denied|fake|nonsense|неправда|никогда|фейк|отрица)\b", re.IGNORECASE)
+    refuse_re = re.compile(r"\b(i won't|i will not|not discussing|won't discuss|let's move on|i'm not going to|не буду|давай сменим тему)\b", re.IGNORECASE)
+    for item in reversed(history[-10:]):
+        if str(item.get("sender", "")).strip().lower() != "admin":
+            continue
+        text = str(item.get("content", "")).strip()
+        if not text:
+            continue
+        if not (content_tokens(text, min_len=4) & topic_tokens):
+            continue
+        if refuse_re.search(text):
+            return "refused"
+        if denial_re.search(text):
+            return "denied"
+        return "answered"
+    return "unknown"
+
+
+def choose_response_mode(primary_intent: str, pressure_score: int, topic_turn_count: int, topic_stance: str) -> str:
+    if primary_intent in {"boundaries"}:
+        return "close_topic_and_redirect"
+    if primary_intent in {"conflict", "personal_life_question"}:
+        if pressure_score >= 6 or topic_turn_count >= 6:
+            return "close_topic_and_redirect"
+        if topic_stance in {"denied", "refused"} and (pressure_score >= 4 or topic_turn_count >= 4):
+            return "refuse_with_reason"
+        return "bounded_answer"
+    if pressure_score >= 7 and topic_turn_count >= 6:
+        return "refuse_with_reason"
+    return "default"
+
+
 def is_identity_question(text: str) -> bool:
     t = text.lower()
     return bool(re.search(r"are you ai|are you real|ты ии|ты реальный|кто ты", t))
@@ -1392,7 +1462,7 @@ def build_initiative_move(router: RouterResult, initiative_type: str) -> str:
     return "Invite a concrete follow-up"
 
 
-def build_response_plan(router: RouterResult, persona: str, user_text: str) -> ResponsePlan:
+def build_response_plan(router: RouterResult, persona: str, user_text: str, response_mode: str = "default") -> ResponsePlan:
     profile = PERSONA_PROFILE.get(persona, PERSONA_PROFILE["Donald Trump"])
     intent_cfg = INTENT_REGISTRY.get(router.primary_intent, {})
     input_verbosity = router.verbosity_level
@@ -1436,7 +1506,16 @@ def build_response_plan(router: RouterResult, persona: str, user_text: str) -> R
     if initiative_type == "none" and intent_cfg.get("initiative_type") in INITIATIVE_TYPES:
         initiative_type = str(intent_cfg["initiative_type"])
     privacy_mode = "deflect" if router.primary_intent in {"personal_life_question", "conflict"} else "none"
-    answer_style = "vague_braggable" if router.primary_intent == "personal_life_question" else ("firm_brief" if router.primary_intent == "conflict" else "default")
+    if router.primary_intent == "personal_life_question":
+        answer_style = "vague_braggable"
+    elif router.primary_intent == "conflict":
+        answer_style = "firm_brief"
+    elif router.primary_intent == "boundaries":
+        answer_style = "close_topic_and_redirect"
+    else:
+        answer_style = "default"
+    if response_mode in {"bounded_answer", "refuse_with_reason", "close_topic_and_redirect"}:
+        answer_style = response_mode
 
     return ResponsePlan(
         primary_intent=router.primary_intent,
@@ -1606,6 +1685,50 @@ def fresh_boundary_reply(persona: str) -> str:
     return random.choice(pool)
 
 
+def is_winner_question(text: str) -> bool:
+    t = text.lower()
+    return bool(
+        re.search(r"\b(who wins|who will win|who's going to win|winner)\b", t)
+        or re.search(r"\b(кто победит|победит ли)\b", t)
+    )
+
+
+def looks_like_refusal(text: str) -> bool:
+    t = text.lower()
+    return bool(
+        re.search(r"\b(i won't|i will not|not discussing|won't discuss|not going to answer|let's move on|change the topic|not getting into that)\b", t)
+        or re.search(r"\b(не буду|не собираюсь отвечать|сменим тему|не хочу обсуждать)\b", t)
+    )
+
+
+def looks_like_bounded_answer(text: str) -> bool:
+    t = text.lower()
+    return bool(
+        re.search(r"\b(hard to call|too early|too many unknowns|no clear winner|it depends|unclear|not definitive)\b", t)
+        or re.search(r"\b(сложно сказать|неясно|слишком рано)\b", t)
+    )
+
+
+def enforce_response_contract(text: str, plan: ResponsePlan, user_text: str, persona: str) -> str:
+    if plan.answer_style == "close_topic_and_redirect":
+        return fresh_boundary_reply(persona)
+    if plan.answer_style == "refuse_with_reason":
+        if not looks_like_refusal(text):
+            return "I am not going to keep debating that topic. Let's move to something else."
+        return text
+    if plan.answer_style == "bounded_answer":
+        if looks_like_refusal(text) or looks_like_bounded_answer(text):
+            return text
+        if is_winner_question(user_text):
+            return text.rstrip(". ") + ". If you want a direct call: there is no clear winner right now."
+        return text
+    if plan.primary_intent == "direct_question" and is_winner_question(user_text):
+        # Guardrail for vague boasting without an answer.
+        if not looks_like_refusal(text) and not looks_like_bounded_answer(text):
+            return text.rstrip(". ") + ". Direct answer: it is too uncertain to call a clear winner now."
+    return text
+
+
 def _normalized_words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9']+", text.lower())
 
@@ -1726,6 +1849,7 @@ def post_process_response(
     text = trim_to_sentence_limit(text, sentence_max)
     text = enforce_question_policy(text, plan.clarifying_question_required)
     text = enforce_clarifying_question(text, plan.clarifying_question_required, plan.clarifying_question)
+    text = enforce_response_contract(text, plan, user_text, persona)
     if plan.primary_intent == "boundaries":
         history = history or []
         text = fresh_boundary_reply(persona)
@@ -1751,6 +1875,19 @@ def post_process_response(
             if has_repeated_opening(text, history, n=3, window=4):
                 text = trim_repeated_opening(text)
             text = dampen_catchphrases(text, history)
+    if history:
+        last_admin = ""
+        for item in reversed(history):
+            if str(item.get("sender", "")).strip().lower() == "admin":
+                candidate = str(item.get("content", "")).strip()
+                if candidate:
+                    last_admin = candidate
+                    break
+        if last_admin and has_ngram_overlap(last_admin, text, n=6):
+            if plan.answer_style in {"close_topic_and_redirect", "refuse_with_reason"}:
+                text = fresh_boundary_reply(persona)
+            elif plan.primary_intent == "conflict":
+                text = fresh_conflict_reply(persona)
     text = trim_to_token_cap(text, plan.final_max_tokens)
     text = enforce_english_only_output(text)
     return text
@@ -1925,7 +2062,20 @@ async def build_router_and_plan(
         router.initiative_recommended = True
         if router.initiative_type == "none":
             router.initiative_type = "day_plans_hook"
-    plan = build_response_plan(router, persona, content)
+    topic_tokens = infer_topic_tokens(content, router.topic_keywords, memory)
+    topic_turn_count = count_topic_turns(history, topic_tokens, window=14)
+    topic_stance = infer_topic_stance(history, topic_tokens)
+    response_mode = choose_response_mode(router.primary_intent, pressure_score, topic_turn_count, topic_stance)
+    dialog_state = DialogState(
+        topic_key=(next(iter(topic_tokens)) if topic_tokens else ""),
+        topic_turn_count=topic_turn_count,
+        pressure_score=pressure_score,
+        repeated_prompt_count=repeat_count,
+        topic_stance=topic_stance,
+        response_mode=response_mode,
+    )
+
+    plan = build_response_plan(router, persona, content, response_mode=response_mode)
     if memory.get("topics") and not plan.cultural_anchor:
         plan.cultural_anchor = str(memory["topics"][0])
     return {
@@ -1939,6 +2089,7 @@ async def build_router_and_plan(
         "router_raw": router_raw,
         "router": router,
         "plan": plan,
+        "dialog_state": dialog_state,
         "router_provider": router_provider,
         "router_model": router_model,
     }
@@ -1958,6 +2109,8 @@ async def debug_plan(req: RespondRequest, response: Response):
         plan = data["plan"]
         router_payload = router.model_dump() if hasattr(router, "model_dump") else router.dict()
         plan_payload = plan.model_dump() if hasattr(plan, "model_dump") else plan.dict()
+        state = data.get("dialog_state")
+        state_payload = state.model_dump() if hasattr(state, "model_dump") else (state.dict() if state else {})
         response.status_code = 200
         return {
             "persona": data["persona"],
@@ -1969,6 +2122,7 @@ async def debug_plan(req: RespondRequest, response: Response):
             "router_raw": data["router_raw"],
             "router": router_payload,
             "plan": plan_payload,
+            "dialog_state": state_payload,
         }
     except LLMError as err:
         response.status_code = err.status_code
