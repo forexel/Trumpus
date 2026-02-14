@@ -422,7 +422,17 @@ export function clearClientSession() {
 }
 
 function redirectToLogin() {
-  if (window.location.pathname === '/login') return
+  const path = window.location.pathname
+  const isPublicAuthPath =
+    path === '/login' ||
+    path.startsWith('/forgot') ||
+    path.startsWith('/register') ||
+    path.startsWith('/create-account') ||
+    path.startsWith('/reset') ||
+    path.startsWith('/reset-password') ||
+    path.startsWith('/forgot-password') ||
+    path.startsWith('/auth/google/callback')
+  if (isPublicAuthPath) return
   window.location.replace('/login')
 }
 

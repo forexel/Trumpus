@@ -111,7 +111,9 @@ export default function App() {
     location.pathname === '/' ||
     location.pathname.startsWith('/login') ||
     location.pathname.startsWith('/forgot') ||
+    location.pathname.startsWith('/forgot-password') ||
     location.pathname.startsWith('/register') ||
+    location.pathname.startsWith('/create-account') ||
     location.pathname.startsWith('/reset') ||
     location.pathname.startsWith('/reset-password') ||
     location.pathname.startsWith('/auth/google/callback') ||
@@ -141,7 +143,9 @@ export default function App() {
           />
           <Route path="/login" element={authed ? <Navigate to={homeRedirect} replace /> : <LoginPage />} />
           <Route path="/forgot" element={authed ? <Navigate to={homeRedirect} replace /> : <ForgotPasswordPage />} />
+          <Route path="/forgot-password" element={authed ? <Navigate to={homeRedirect} replace /> : <ForgotPasswordPage />} />
           <Route path="/register" element={authed ? <Navigate to={homeRedirect} replace /> : <RegisterPage />} />
+          <Route path="/create-account" element={authed ? <Navigate to={homeRedirect} replace /> : <RegisterPage />} />
           <Route path="/reset" element={authed ? <Navigate to={homeRedirect} replace /> : <ResetPasswordPage />} />
           <Route path="/reset-password" element={authed ? <Navigate to={homeRedirect} replace /> : <ResetPasswordPage />} />
           <Route path="/auth/google/callback" element={<GoogleCallbackPage />} />
