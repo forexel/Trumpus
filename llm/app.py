@@ -374,7 +374,7 @@ class RespondRequest(BaseModel):
     memory: dict[str, Any] | None = None
 
 
-def normalize_history(history: list[dict[str, str]], max_items: int = 16) -> list[dict[str, str]]:
+def normalize_history(history: list[dict[str, str]], max_items: int = 60) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     if not history:
         return out
@@ -953,6 +953,48 @@ def extract_keywords(text: str, max_items: int = 4) -> list[str]:
     return out
 
 
+def content_tokens(text: str, min_len: int = 3) -> set[str]:
+    stop = {
+        "the", "and", "that", "with", "from", "your", "you", "are", "was", "were", "have", "has",
+        "this", "what", "when", "where", "which", "would", "could", "should", "them", "they",
+        "как", "что", "это", "там", "для", "или", "его", "она", "они", "тут", "если", "уже",
+        "надо", "просто", "тебя", "меня", "очень", "когда", "где", "кто", "какой", "какая",
+    }
+    words = re.findall(r"[a-zа-я0-9_]+", text.lower())
+    return {w for w in words if len(w) >= min_len and w not in stop}
+
+
+def is_context_followup(text: str, history: list[dict[str, str]]) -> bool:
+    t = text.strip().lower()
+    if not t or not history:
+        return False
+    # Elliptic short confirmations/pronouns should resolve against nearby context.
+    if t in {"it", "that", "this", "yeah", "yes", "yep", "да", "ага", "угу"}:
+        for item in reversed(history[-4:]):
+            if str(item.get("sender", "")).strip().lower() == "admin" and "?" in str(item.get("content", "")):
+                return True
+    cur = content_tokens(t)
+    if not cur:
+        return False
+    tail_text = " ".join(str(item.get("content", "")) for item in history[-6:])
+    tail = content_tokens(tail_text)
+    # If current message shares topical words with last turns, treat as continuation.
+    overlap = cur & tail
+    return len(overlap) >= 1
+
+
+def has_rich_recent_context(history: list[dict[str, str]]) -> bool:
+    if len(history) < 4:
+        return False
+    # At least 2 user + 2 assistant turns in tail means model has enough context
+    # to attempt resolution before asking clarifying questions.
+    tail = history[-12:]
+    user_turns = sum(1 for x in tail if str(x.get("sender", "")).lower() == "client")
+    assistant_turns = sum(1 for x in tail if str(x.get("sender", "")).lower() == "admin")
+    nontrivial = sum(1 for x in tail if len(str(x.get("content", "")).strip()) >= 8)
+    return user_turns >= 2 and assistant_turns >= 2 and nontrivial >= 4
+
+
 def is_name_question(text: str) -> bool:
     t = text.strip().lower()
     return bool(
@@ -1351,8 +1393,8 @@ async def build_router_and_plan(
     if persona not in PERSONA_PROMPTS:
         persona = "Donald Trump"
     persona_prompt = normalize_persona_prompt(persona_prompt_input) or PERSONA_PROMPTS[persona]
-    history = normalize_history(history_input or [])
-    topic_context = normalize_history(topic_context_input or [], max_items=8)
+    history = normalize_history(history_input or [], max_items=60)
+    topic_context = normalize_history(topic_context_input or [], max_items=12)
     memory = normalize_memory(memory_input or {})
     history_block = render_history_block(history)
     topic_context_block = render_topic_context_block(topic_context)
@@ -1415,6 +1457,29 @@ async def build_router_and_plan(
             router.verbosity_level = "S"
         router.clarifying_question_required = False
         router.clarifying_question = ""
+    # Continuation guardrail: short follow-ups like "it", "Greenland", "photos from ...",
+    # or confirmations should stay in topic and not be downgraded to clarification.
+    if is_context_followup(content, history):
+        router.primary_intent = "direct_question"
+        if router.verbosity_level == "XS":
+            router.verbosity_level = "S"
+        router.clarifying_question_required = False
+        router.clarifying_question = ""
+        if not router.topic_keywords:
+            tail_text = " ".join(str(item.get("content", "")) for item in history[-4:])
+            router.topic_keywords = extract_keywords(tail_text, max_items=4)
+    elif has_rich_recent_context(history):
+        # Prefer contextual resolution over generic clarification when dialogue is rich.
+        # This keeps follow-up questions grounded in prior turns.
+        if router.primary_intent in {"low_info", "small_talk", "greeting"} and len(content_tokens(content)) >= 1:
+            router.primary_intent = "direct_question"
+        if router.verbosity_level == "XS":
+            router.verbosity_level = "S"
+        router.clarifying_question_required = False
+        router.clarifying_question = ""
+        if not router.topic_keywords:
+            tail_text = " ".join(str(item.get("content", "")) for item in history[-6:])
+            router.topic_keywords = extract_keywords(tail_text, max_items=4)
     if is_memory_recall_question(content):
         router.primary_intent = "direct_question"
         router.secondary_intents = []

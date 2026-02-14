@@ -348,12 +348,26 @@ button.ghost { background: transparent; color: var(--primary); border: 1px solid
   background: #f5f7ff;
 }
 
+.chat-tree-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 .chat-tree-item.active {
   border-color: #1e2a78;
   background: #e9edff;
 }
 
 .chat-tree-title { font-weight: 600; font-size: 14px; }
+.chat-tree-client-name {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .chat-tree-empty,
 .chat-tree-loading { color: var(--muted); font-size: 13px; }

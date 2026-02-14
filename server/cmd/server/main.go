@@ -159,6 +159,17 @@ func runtimeHistoryMax() int {
 	return 24
 }
 
+func llmHistoryContextMax() int {
+	raw := strings.TrimSpace(os.Getenv("LLM_HISTORY_CONTEXT_MAX"))
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		if n > 120 {
+			return 120
+		}
+		return n
+	}
+	return 60
+}
+
 func llmBusyFallback(persona string) string {
 	switch strings.TrimSpace(persona) {
 	case "Donald Trump":
@@ -2410,7 +2421,7 @@ func processLLMJob(job LLMJob) error {
 		return fmt.Errorf("chat not found")
 	}
 
-	history := buildLLMHistory(job.ChatID, 16)
+	history := buildLLMHistory(job.ChatID, llmHistoryContextMax())
 	topicContext := buildTopicContext(job.ChatID, job.Content, time.Now().UTC())
 	memory := getOrBuildRollingMemory(job.ChatID, time.Now().UTC())
 	isRetriableLLMFailure := func(status int, callErr error) bool {
@@ -2584,7 +2595,7 @@ func processLLMJob(job LLMJob) error {
 
 func buildLLMHistory(chatID string, limit int) []llmHistoryItem {
 	if limit <= 0 {
-		limit = 16
+		limit = llmHistoryContextMax()
 	}
 	if cached := readHistoryCache(chatID, limit); len(cached) > 0 {
 		return cached

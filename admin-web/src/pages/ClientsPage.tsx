@@ -1,17 +1,43 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { fetchClients, AdminClient } from '../lib/api'
+import { fetchClients, fetchChats, AdminClient, AdminChat } from '../lib/api'
+
+type ClientWithSortedChats = AdminClient & { chats: (AdminClient['chats'][number] & { last_message_at: string })[] }
 
 export default function ClientsPage() {
-  const [clients, setClients] = useState<AdminClient[]>([])
+  const [clients, setClients] = useState<ClientWithSortedChats[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
+  const sortByFreshChat = (items: ClientWithSortedChats[]) =>
+    [...items].sort((a, b) => {
+      const aTs = a.chats[0]?.last_message_at ? new Date(a.chats[0].last_message_at).getTime() : 0
+      const bTs = b.chats[0]?.last_message_at ? new Date(b.chats[0].last_message_at).getTime() : 0
+      return bTs - aTs
+    })
+
   useEffect(() => {
     let mounted = true
-    fetchClients()
-      .then((data) => {
-        if (mounted) setClients(data.items)
+    Promise.all([fetchClients(), fetchChats()])
+      .then(([clientsData, chatsData]) => {
+        const chatsByClient: Record<string, AdminChat[]> = {}
+        for (const chat of chatsData.items) {
+          if (!chatsByClient[chat.client_id]) chatsByClient[chat.client_id] = []
+          chatsByClient[chat.client_id].push(chat)
+        }
+        const normalized = clientsData.items.map((client) => {
+          const fullChats = (chatsByClient[client.id] || [])
+            .sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime())
+            .map((chat) => ({
+              id: chat.id,
+              title: chat.title,
+              persona: chat.persona,
+              unread_for_admin: chat.unread_for_admin,
+              last_message_at: chat.last_message_at,
+            }))
+          return { ...client, chats: fullChats }
+        })
+        if (mounted) setClients(sortByFreshChat(normalized))
       })
       .catch((err) => {
         if (mounted) setError(err instanceof Error ? err.message : 'Failed to load clients')

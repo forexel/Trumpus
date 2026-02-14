@@ -1,20 +1,23 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { fetchClients, getWsBase, AdminClient } from '../lib/api'
+import { fetchChats, getWsBase, AdminChat } from '../lib/api'
 import ChatDetailPage from './ChatDetailPage'
 
 export default function ChatsPage() {
-  const [clients, setClients] = useState<AdminClient[]>([])
+  const [chats, setChats] = useState<AdminChat[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const { id } = useParams()
   const activeChatId = id ?? ''
 
+  const sortChatsByFresh = (items: AdminChat[]) =>
+    [...items].sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime())
+
   useEffect(() => {
     let mounted = true
-    fetchClients()
+    fetchChats()
       .then((data) => {
-        if (mounted) setClients(data.items)
+        if (mounted) setChats(sortChatsByFresh(data.items))
       })
       .catch((err) => {
         if (mounted) setError(err instanceof Error ? err.message : 'Failed to load chats')
@@ -35,14 +38,9 @@ export default function ChatsPage() {
         const chatId = payload?.chat_id as string | undefined
         const unread = payload?.unread_for_admin as number | undefined
         if (!chatId || typeof unread !== 'number') return
-        setClients((prev) =>
-          prev.map((client) => {
-            const chats = client.chats.map((chat) =>
-              chat.id === chatId ? { ...chat, unread_for_admin: unread } : chat
-            )
-            return { ...client, chats }
-          })
-        )
+        setChats((prev) => sortChatsByFresh(prev.map((chat) => (
+          chat.id === chatId ? { ...chat, unread_for_admin: unread } : chat
+        ))))
       } catch {
         // ignore malformed events
       }
@@ -62,27 +60,25 @@ export default function ChatsPage() {
           <div className="chat-tree-loading error">{error}</div>
         ) : (
           <div className="chat-tree-list">
-            {clients.map((client) => (
-              <div key={client.id} className="chat-tree-group">
-                <div className="chat-tree-client">{client.name}</div>
-                {client.chats.length === 0 ? (
-                  <div className="chat-tree-empty">No chats yet</div>
-                ) : (
-                  client.chats.map((chat) => (
-                    <Link
-                      key={chat.id}
-                      className={`chat-tree-item ${activeChatId === chat.id ? 'active' : ''}`}
-                      to={`/chats/${chat.id}`}
-                    >
-                      <span className="chat-tree-title">{chat.title}</span>
-                      {chat.unread_for_admin > 0 ? (
-                        <span className="unread-dot" title="New message" />
-                      ) : null}
-                    </Link>
-                  ))
-                )}
-              </div>
-            ))}
+            {chats.length === 0 ? (
+              <div className="chat-tree-empty">No chats yet</div>
+            ) : (
+              chats.map((chat) => (
+                <Link
+                  key={chat.id}
+                  className={`chat-tree-item ${activeChatId === chat.id ? 'active' : ''}`}
+                  to={`/chats/${chat.id}`}
+                >
+                  <span className="chat-tree-main">
+                    <span className="chat-tree-title">{chat.title}</span>
+                    <span className="chat-tree-client-name">{chat.client_name}</span>
+                  </span>
+                  {chat.unread_for_admin > 0 ? (
+                    <span className="unread-dot" title="New message" />
+                  ) : null}
+                </Link>
+              ))
+            )}
           </div>
         )}
       </aside>
