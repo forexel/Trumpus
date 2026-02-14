@@ -405,6 +405,32 @@ button.ghost { background: transparent; color: var(--primary); border: 1px solid
   align-items: center;
 }
 
+.debug-panel {
+  margin: 8px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: #f8faff;
+}
+
+.debug-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.debug-panel pre {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .chat {
   margin: 12px 0;
   display: flex;

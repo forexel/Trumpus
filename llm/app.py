@@ -146,6 +146,7 @@ GENERATOR_INTENT_BEHAVIOR = """Intent behaviors:
 - memory recall questions ("what did we talk about", "помнишь/о чем вчера"): summarize concrete points from LONG-TERM MEMORY and RECENT CONVERSATION in short bullets, do not dodge.
 - resolve pronouns from nearby turns (for example "it/that/this") using RECENT CONVERSATION; avoid asking clarification if referent is obvious from the last user/admin messages.
 - low_info or clarifying_question_required: do NOT riff. Ask exactly one clarification question.
+- conflict/sensitive accusation: do not repeat previous denials verbatim; keep it brief, firm, and fresh (1-2 short sentences), then move on.
 - personal_life_question: do not provide numbers or explicit details; use brief deflection + light humor + one redirect question."""
 
 INTENTS = {
@@ -208,6 +209,7 @@ INTENT_REGISTRY: dict[str, dict[str, Any]] = {
     "advice_request": {"default_verbosity": "M", "initiative_allowed": True, "initiative_type": "clarifying_question", "clarifying_default": True, "humor_policy": "limited"},
     "emotional_support": {"default_verbosity": "M", "initiative_allowed": True, "initiative_type": "clarifying_question", "clarifying_default": True, "humor_policy": "off"},
     "personal_life_question": {"default_verbosity": "S", "initiative_allowed": True, "initiative_type": "topic_switch_or_hook", "clarifying_default": False, "humor_policy": "limited", "policy": "deflect_no_numbers"},
+    "conflict": {"default_verbosity": "S", "initiative_allowed": False, "initiative_type": "none", "clarifying_default": False, "humor_policy": "off"},
     "low_info": {"default_verbosity": "XS", "initiative_allowed": False, "initiative_type": "none", "clarifying_default": True, "humor_policy": "off"},
     "farewell": {"default_verbosity": "XS", "initiative_allowed": False, "initiative_type": "none", "clarifying_default": False, "humor_policy": "off"},
     "thanks": {"default_verbosity": "XS", "initiative_allowed": False, "initiative_type": "none", "clarifying_default": False, "humor_policy": "optional"},
@@ -409,6 +411,33 @@ def render_topic_context_block(items: list[dict[str, str]]) -> str:
         role = "User" if h["sender"] == "client" else "Assistant"
         lines.append(f"{role}: {h['content']}")
     return "\n".join(lines)
+
+
+def recent_assistant_openings(history: list[dict[str, str]], max_items: int = 4) -> list[str]:
+    openings: list[str] = []
+    seen: set[str] = set()
+    for item in reversed(history):
+        sender = str(item.get("sender", "")).strip().lower()
+        if sender != "admin":
+            continue
+        content = str(item.get("content", "")).strip()
+        if not content:
+            continue
+        normalized = re.sub(r"\s+", " ", content).strip()
+        parts = re.split(r"[.!?]\s*", normalized)
+        first = parts[0].strip() if parts else normalized
+        if not first:
+            continue
+        # Keep only short opening fragment (3-6 words) to block exact pattern reuse.
+        words = first.split()
+        fragment = " ".join(words[:6]).lower()
+        if len(words) < 2 or fragment in seen:
+            continue
+        seen.add(fragment)
+        openings.append(fragment)
+        if len(openings) >= max_items:
+            break
+    return openings
 
 
 def normalize_memory(memory: dict[str, Any]) -> dict[str, Any]:
@@ -1039,6 +1068,49 @@ def is_personal_life_question(text: str) -> bool:
     )
 
 
+def is_sensitive_accusation(text: str, history: list[dict[str, str]] | None = None) -> bool:
+    t = text.lower().strip()
+    if not t:
+        return False
+    history = history or []
+    score = 0
+
+    direct_accuse = bool(
+        re.search(r"\b(you are lying|you're lying|you lied|you deny|you denied|you hide|you're hiding)\b", t)
+        or re.search(r"\b(ты вр[её]ш|ты соврал|ты солгал|ты скрываешь|ты отрицаешь)\b", t)
+    )
+    if direct_accuse:
+        score += 3
+
+    second_person = bool(
+        re.search(r"\b(you|your|you're|u)\b", t)
+        or re.search(r"\b(ты|тебя|твой|твоя|твое|вас|ваш)\b", t)
+    )
+    accusation_markers = bool(
+        re.search(r"\b(lie|lying|lied|deny|denied|hide|hiding|cover[- ]?up|fake|fraud|guilty|scandal|exposed|leaked)\b", t)
+        or re.search(r"\b(вран|вр[её]ш|соврал|солгал|лж[её]шь|скрыва|фейк|мошенн|винов|скандал|слив|обнарод)\b", t)
+    )
+    evidence_markers = bool(
+        re.search(r"\b(photo|photos|video|videos|record|records|proof|evidence|docs|documents|files|report|published|government|authorities|court|media)\b", t)
+        or re.search(r"\b(фото|видео|доказ|документ|файл|отчет|обнарод|правитель|власт|суд|медиа|пресс)\b", t)
+    )
+
+    if second_person and accusation_markers:
+        score += 2
+    if evidence_markers and accusation_markers:
+        score += 2
+    elif evidence_markers and second_person:
+        score += 1
+
+    if history and (accusation_markers or evidence_markers):
+        tail_text = " ".join(str(h.get("content", "")) for h in history[-8:])
+        overlap = content_tokens(t, min_len=4) & content_tokens(tail_text, min_len=4)
+        if overlap:
+            score += 1
+
+    return score >= 3
+
+
 def is_identity_question(text: str) -> bool:
     t = text.lower()
     return bool(re.search(r"are you ai|are you real|ты ии|ты реальный|кто ты", t))
@@ -1218,6 +1290,8 @@ def build_response_plan(router: RouterResult, persona: str, user_text: str) -> R
         clarify_required = False
     if router.primary_intent == "personal_life_question":
         clarify_required = False
+    if router.primary_intent == "conflict":
+        clarify_required = False
     clarifying_question = router.clarifying_question if clarify_required else ""
     if clarify_required and not clarifying_question:
         clarifying_question = f'I am not sure what you mean by "{user_text.strip()}". Can you say it another way?'
@@ -1225,8 +1299,8 @@ def build_response_plan(router: RouterResult, persona: str, user_text: str) -> R
     initiative_type = router.initiative_type if router.initiative_type in INITIATIVE_TYPES else "none"
     if initiative_type == "none" and intent_cfg.get("initiative_type") in INITIATIVE_TYPES:
         initiative_type = str(intent_cfg["initiative_type"])
-    privacy_mode = "deflect" if router.primary_intent == "personal_life_question" else "none"
-    answer_style = "vague_braggable" if router.primary_intent == "personal_life_question" else "default"
+    privacy_mode = "deflect" if router.primary_intent in {"personal_life_question", "conflict"} else "none"
+    answer_style = "vague_braggable" if router.primary_intent == "personal_life_question" else ("firm_brief" if router.primary_intent == "conflict" else "default")
 
     return ResponsePlan(
         primary_intent=router.primary_intent,
@@ -1318,6 +1392,36 @@ def build_personal_life_deflection(plan: ResponsePlan) -> str:
     )
 
 
+def has_ngram_overlap(a: str, b: str, n: int = 6) -> bool:
+    wa = re.findall(r"[a-z0-9']+", a.lower())
+    wb = re.findall(r"[a-z0-9']+", b.lower())
+    if len(wa) < n or len(wb) < n:
+        return False
+    seq = {" ".join(wa[i:i+n]) for i in range(0, len(wa)-n+1)}
+    if not seq:
+        return False
+    for i in range(0, len(wb)-n+1):
+        if " ".join(wb[i:i+n]) in seq:
+            return True
+    return False
+
+
+def fresh_conflict_reply(persona: str) -> str:
+    templates = {
+        "Donald Trump": [
+            "You made your accusation. I have given my position, and I'm not repeating a script.",
+            "I hear your claim. My answer stays the same, and I'm not re-litigating it line by line.",
+            "Point taken. I disagree with your framing, and I'm moving on.",
+        ],
+        "Elon Musk": [
+            "Claim noted. Position unchanged. No need to loop the same statement.",
+            "I heard you. My stance is already clear, so let's move on.",
+        ],
+    }
+    pool = templates.get(persona, templates["Elon Musk"])
+    return random.choice(pool)
+
+
 def enforce_identity_disclosure_policy(text: str, user_text: str) -> str:
     if is_identity_question(user_text):
         return text
@@ -1363,7 +1467,13 @@ def enforce_persona_name_policy(text: str, user_text: str, persona: str) -> str:
     return out
 
 
-def post_process_response(raw: str, plan: ResponsePlan, user_text: str, persona: str) -> str:
+def post_process_response(
+    raw: str,
+    plan: ResponsePlan,
+    user_text: str,
+    persona: str,
+    history: list[dict[str, str]] | None = None,
+) -> str:
     if plan.primary_intent == "personal_life_question":
         text = build_personal_life_deflection(plan)
         text = trim_to_token_cap(text, plan.final_max_tokens)
@@ -1376,6 +1486,17 @@ def post_process_response(raw: str, plan: ResponsePlan, user_text: str, persona:
     text = trim_to_sentence_limit(text, sentence_max)
     text = enforce_question_policy(text, plan.clarifying_question_required)
     text = enforce_clarifying_question(text, plan.clarifying_question_required, plan.clarifying_question)
+    if plan.primary_intent == "conflict":
+        history = history or []
+        last_admin = ""
+        for item in reversed(history):
+            if str(item.get("sender", "")).strip().lower() == "admin":
+                candidate = str(item.get("content", "")).strip()
+                if candidate:
+                    last_admin = candidate
+                    break
+        if last_admin and has_ngram_overlap(last_admin, text, n=6):
+            text = fresh_conflict_reply(persona)
     text = trim_to_token_cap(text, plan.final_max_tokens)
     return text
 
@@ -1502,6 +1623,17 @@ async def build_router_and_plan(
         router.humor_suitable = False
         router.user_tone = "confused"
         router.topic_keywords = []
+    elif is_sensitive_accusation(content, history):
+        router.primary_intent = "conflict"
+        router.secondary_intents = []
+        router.verbosity_level = "S"
+        router.clarifying_question_required = False
+        router.clarifying_question = ""
+        router.initiative_recommended = False
+        router.initiative_type = "none"
+        router.humor_suitable = False
+        router.user_tone = "rude"
+        router.topic_keywords = extract_keywords(content, max_items=4)
     elif is_personal_life_question(content):
         router.primary_intent = "personal_life_question"
         router.secondary_intents = []
@@ -1609,6 +1741,16 @@ async def respond(req: RespondRequest, response: Response):
             prompt_parts.append(f"LONG-TERM MEMORY:\n{memory_block}")
         if data["history"]:
             prompt_parts.append(f"RECENT CONVERSATION:\n{history_block}")
+            openings = recent_assistant_openings(data["history"], max_items=4)
+            if openings:
+                blocked = "\n".join(f"- {x}" for x in openings)
+                prompt_parts.append(
+                    "VARIETY CONSTRAINTS:\n"
+                    "Do not start your reply with any recent assistant opening below.\n"
+                    "Do not reuse any 6+ word phrase from recent assistant replies.\n"
+                    "Use fresh wording and sentence rhythm.\n"
+                    f"{blocked}"
+                )
         prompt_parts.append(f'USER MESSAGE:\n"{req.content}"')
         prompt_parts.append(f"RESPONSE PLAN:\n{plan_json}")
         prompt_parts.append("Generate final answer.")
@@ -1627,7 +1769,7 @@ async def respond(req: RespondRequest, response: Response):
             presence_penalty=PRESENCE_PENALTY,
             frequency_penalty=FREQUENCY_PENALTY,
         )
-        content = post_process_response(generated_raw, plan, req.content, persona)
+        content = post_process_response(generated_raw, plan, req.content, persona, data["history"])
         response.status_code = 200
         return {
             "content": content,

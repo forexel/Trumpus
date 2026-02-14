@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { fetchChatMessages, markChatRead, sendChatMessage, resendClientMessage, getWsBase, Message, AdminChat } from '../lib/api'
+import { fetchChatMessages, markChatRead, sendChatMessage, resendClientMessage, fetchMessageDebugPlan, getWsBase, Message, AdminChat } from '../lib/api'
 
 type ChatDetailProps = {
   chatId?: string
@@ -17,6 +17,13 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
   const [resendingId, setResendingId] = useState('')
   const [resendTargetId, setResendTargetId] = useState('')
   const [resendTempId, setResendTempId] = useState('')
+  const [debugLoadingId, setDebugLoadingId] = useState('')
+  const [debugMessageId, setDebugMessageId] = useState('')
+  const [debugPayload, setDebugPayload] = useState<string>('')
+  const [debugKey, setDebugKey] = useState('')
+  const [debugPrevKey, setDebugPrevKey] = useState('')
+  const [debugKeyChanged, setDebugKeyChanged] = useState<boolean | null>(null)
+  const resendBaselineKeyRef = useRef<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [actionError, setActionError] = useState('')
@@ -30,6 +37,35 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
     }),
     []
   )
+
+  function buildDecisionKey(debug: Record<string, unknown>) {
+    const router = (debug?.router || {}) as Record<string, unknown>
+    const plan = (debug?.plan || {}) as Record<string, unknown>
+    const topics = Array.isArray(router.topic_keywords) ? router.topic_keywords.map(String).join(',') : ''
+    return [
+      String(router.primary_intent || ''),
+      String(plan.verbosity_level || router.verbosity_level || ''),
+      `clarify:${String(Boolean(plan.clarifying_question_required))}`,
+      `initiative:${String(router.initiative_type || '')}`,
+      `topics:${topics}`,
+    ].join('|')
+  }
+
+  async function loadDebugPlan(messageId: string, previousKey?: string) {
+    if (!chatId || !messageId) return
+    const data = await fetchMessageDebugPlan(chatId, messageId)
+    const nextKey = buildDecisionKey(data.debug || {})
+    setDebugMessageId(messageId)
+    setDebugPayload(JSON.stringify(data.debug, null, 2))
+    setDebugKey(nextKey)
+    if (typeof previousKey === 'string') {
+      setDebugPrevKey(previousKey)
+      setDebugKeyChanged(previousKey !== nextKey)
+    } else {
+      setDebugPrevKey('')
+      setDebugKeyChanged(null)
+    }
+  }
 
   useEffect(() => {
     let mounted = true
@@ -74,9 +110,15 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
             return [...prev, incoming]
           })
           if (resendingId && incoming.sender === 'admin') {
+            const sourceMessageID = resendingId
             setResendingId('')
             setResendTargetId('')
             setResendTempId('')
+            const prevKey = resendBaselineKeyRef.current[sourceMessageID]
+            delete resendBaselineKeyRef.current[sourceMessageID]
+            void loadDebugPlan(sourceMessageID, prevKey).catch(() => {
+              // ignore debug errors on background refresh
+            })
           }
           if (incoming.sender === 'client') {
             markChatRead(chatId)
@@ -151,6 +193,13 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
     })
 
     try {
+      const debugBefore = await fetchMessageDebugPlan(chatId, messageId)
+      resendBaselineKeyRef.current[messageId] = buildDecisionKey(debugBefore.debug || {})
+    } catch {
+      delete resendBaselineKeyRef.current[messageId]
+    }
+
+    try {
       await resendClientMessage(chatId, messageId)
       // Fallback sync in case websocket event is delayed/lost.
       setTimeout(async () => {
@@ -159,6 +208,13 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
           const data = await fetchChatMessages(chatId)
           setChat(data.chat)
           setMessages(data.messages)
+          const prevKey = resendBaselineKeyRef.current[messageId]
+          delete resendBaselineKeyRef.current[messageId]
+          if (prevKey) {
+            void loadDebugPlan(messageId, prevKey).catch(() => {
+              // ignore debug errors on fallback refresh
+            })
+          }
           setResendingId('')
           setResendTargetId('')
           setResendTempId('')
@@ -180,6 +236,19 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
       setActionError(err instanceof Error ? err.message : 'Failed to resend to LLM')
     } finally {
       // keep loading state until ws/poll sync completes
+    }
+  }
+
+  async function onDebug(messageId: string) {
+    if (!chatId || !messageId) return
+    setActionError('')
+    setDebugLoadingId(messageId)
+    try {
+      await loadDebugPlan(messageId)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to load debug plan')
+    } finally {
+      setDebugLoadingId('')
     }
   }
 
@@ -208,6 +277,22 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
           <div className="muted">{chat?.client_name}</div>
         </div>
       </div>
+      {debugPayload ? (
+        <div className="debug-panel">
+          <div className="debug-panel-header">
+            <strong>LLM Debug Plan</strong>
+            <span className="muted">message: {debugMessageId}</span>
+          </div>
+          <div className="muted" style={{ marginBottom: 6 }}>decision key: <code>{debugKey}</code></div>
+          {debugKeyChanged !== null ? (
+            <div className="muted" style={{ marginBottom: 6 }}>
+              key changed after resend: <strong>{debugKeyChanged ? 'YES' : 'NO'}</strong>
+              {debugPrevKey ? <> (previous: <code>{debugPrevKey}</code>)</> : null}
+            </div>
+          ) : null}
+          <pre>{debugPayload}</pre>
+        </div>
+      ) : null}
       <div className="chat">
         {messages.map((msg) => (
           <div
@@ -223,13 +308,22 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
             <div className="msg-footer">
               <div className="msg-meta">{new Date(msg.created_at).toLocaleTimeString()}</div>
               {msg.sender === 'client' ? (
-                <button
-                  className="msg-resend-btn"
-                  onClick={() => onResend(msg.id)}
-                  disabled={resendingId === msg.id}
-                >
-                  {resendingId === msg.id ? 'Resending...' : 'Resend'}
-                </button>
+                <>
+                  <button
+                    className="msg-resend-btn"
+                    onClick={() => onResend(msg.id)}
+                    disabled={resendingId === msg.id}
+                  >
+                    {resendingId === msg.id ? 'Resending...' : 'Resend'}
+                  </button>
+                  <button
+                    className="msg-resend-btn"
+                    onClick={() => onDebug(msg.id)}
+                    disabled={debugLoadingId === msg.id}
+                  >
+                    {debugLoadingId === msg.id ? 'Debug...' : 'Debug'}
+                  </button>
+                </>
               ) : null}
             </div>
           </div>

@@ -326,14 +326,15 @@ func (h *runtimeHistoryStore) setFromMessages(chatID string, msgs []*Message, li
 }
 
 type LLMJob struct {
-	ChatID        string `json:"chat_id"`
-	Persona       string `json:"persona"`
-	PersonaPrompt string `json:"persona_prompt,omitempty"`
-	Content       string `json:"content"`
-	RequestID     string `json:"request_id"`
-	Source        string `json:"source,omitempty"`
-	ReplaceID     string `json:"replace_message_id,omitempty"`
-	Attempts      int    `json:"attempts"`
+	ChatID        string           `json:"chat_id"`
+	Persona       string           `json:"persona"`
+	PersonaPrompt string           `json:"persona_prompt,omitempty"`
+	Content       string           `json:"content"`
+	History       []llmHistoryItem `json:"history,omitempty"`
+	RequestID     string           `json:"request_id"`
+	Source        string           `json:"source,omitempty"`
+	ReplaceID     string           `json:"replace_message_id,omitempty"`
+	Attempts      int              `json:"attempts"`
 }
 
 type ChatEvent struct {
@@ -2421,7 +2422,10 @@ func processLLMJob(job LLMJob) error {
 		return fmt.Errorf("chat not found")
 	}
 
-	history := buildLLMHistory(job.ChatID, llmHistoryContextMax())
+	history := job.History
+	if len(history) == 0 {
+		history = buildLLMHistory(job.ChatID, llmHistoryContextMax())
+	}
 	topicContext := buildTopicContext(job.ChatID, job.Content, time.Now().UTC())
 	memory := getOrBuildRollingMemory(job.ChatID, time.Now().UTC())
 	isRetriableLLMFailure := func(status int, callErr error) bool {
@@ -2628,6 +2632,53 @@ func buildLLMHistory(chatID string, limit int) []llmHistoryItem {
 	}
 	writeHistoryCache(chatID, out)
 	return out
+}
+
+func buildHistoryFromMessages(messages []*Message, limit int) []llmHistoryItem {
+	if limit <= 0 {
+		limit = llmHistoryContextMax()
+	}
+	out := make([]llmHistoryItem, 0, limit)
+	start := 0
+	if len(messages) > limit {
+		start = len(messages) - limit
+	}
+	for i := start; i < len(messages); i++ {
+		m := messages[i]
+		if m == nil {
+			continue
+		}
+		content := strings.TrimSpace(m.Content)
+		if content == "" || isLLMPlaceholderResponse(content) {
+			continue
+		}
+		if m.Sender != "client" && m.Sender != "admin" {
+			continue
+		}
+		out = append(out, llmHistoryItem{Sender: m.Sender, Content: content})
+	}
+	return out
+}
+
+func buildHistoryUntilMessage(chatID, messageID string, limit int) []llmHistoryItem {
+	if strings.TrimSpace(chatID) == "" || strings.TrimSpace(messageID) == "" {
+		return nil
+	}
+	msgs, err := store.listMessages(chatID)
+	if err != nil || len(msgs) == 0 {
+		return nil
+	}
+	idx := -1
+	for i, m := range msgs {
+		if m != nil && m.ID == messageID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return nil
+	}
+	return buildHistoryFromMessages(msgs[:idx+1], limit)
 }
 
 func extractTopTopicsFromMessages(msgs []*Message, maxTopics int) []string {
@@ -3448,6 +3499,51 @@ func callLLM(baseURL, chatID, persona, personaPrompt, content string, history []
 		return "", res.StatusCode, string(respBody), err
 	}
 	return resp.Content, res.StatusCode, string(respBody), nil
+}
+
+func callLLMDebugPlan(baseURL, chatID, persona, personaPrompt, content string, history []llmHistoryItem, topicContext []llmHistoryItem, memory llmMemory) (map[string]any, int, string, error) {
+	if strings.TrimSpace(baseURL) == "" {
+		return nil, 0, "", fmt.Errorf("llm base not set")
+	}
+	if history == nil {
+		history = []llmHistoryItem{}
+	}
+	if topicContext == nil {
+		topicContext = []llmHistoryItem{}
+	}
+	if memory.Topics == nil {
+		memory.Topics = []string{}
+	}
+	payload := jsonMap{
+		"chat_id":        chatID,
+		"persona":        persona,
+		"persona_prompt": personaPrompt,
+		"content":        content,
+		"history":        history,
+		"topic_context":  topicContext,
+		"memory":         memory,
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/debug/plan", strings.NewReader(string(body)))
+	if err != nil {
+		return nil, 0, "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 120 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	defer res.Body.Close()
+	respBody, _ := io.ReadAll(res.Body)
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, res.StatusCode, string(respBody), fmt.Errorf("llm debug error: %s", string(respBody))
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, res.StatusCode, string(respBody), err
+	}
+	return resp, res.StatusCode, string(respBody), nil
 }
 
 func redirectAllowlist() []string {
@@ -4298,6 +4394,10 @@ func handleAdminChatRoutes(w http.ResponseWriter, r *http.Request) {
 			handleAdminResendMessage(w, r, chatID, parts[2])
 			return
 		}
+		if len(parts) == 4 && parts[3] == "debug" && r.Method == http.MethodGet {
+			handleAdminMessageDebug(w, r, chatID, parts[2])
+			return
+		}
 		writeJSON(w, http.StatusNotFound, jsonMap{"error": "not found"})
 		return
 	case "read":
@@ -4351,6 +4451,7 @@ func handleAdminResendMessage(w http.ResponseWriter, r *http.Request, chatID, me
 			}
 		}
 		if clientIndex >= 0 {
+			job.History = buildHistoryFromMessages(messages[:clientIndex+1], llmHistoryContextMax())
 			for i := clientIndex + 1; i < len(messages); i++ {
 				if messages[i].Sender == "admin" {
 					job.ReplaceID = messages[i].ID
@@ -4372,6 +4473,56 @@ func handleAdminResendMessage(w http.ResponseWriter, r *http.Request, chatID, me
 		"queued":     true,
 		"chat_id":    chatID,
 		"message_id": messageID,
+	})
+}
+
+func handleAdminMessageDebug(w http.ResponseWriter, r *http.Request, chatID, messageID string) {
+	chat, err := store.getChatByID(chatID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if chat == nil {
+		writeJSON(w, http.StatusNotFound, jsonMap{"error": "chat not found"})
+		return
+	}
+	msg, err := store.getMessageByID(messageID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if msg == nil || msg.ChatID != chatID {
+		writeJSON(w, http.StatusNotFound, jsonMap{"error": "message not found"})
+		return
+	}
+	if msg.Sender != "client" {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "only client messages are supported"})
+		return
+	}
+
+	history := buildHistoryUntilMessage(chatID, messageID, llmHistoryContextMax())
+	if len(history) == 0 {
+		history = buildLLMHistory(chatID, llmHistoryContextMax())
+	}
+	topicContext := buildTopicContext(chatID, msg.Content, msg.CreatedAt.UTC())
+	memory := getOrBuildRollingMemory(chatID, msg.CreatedAt.UTC())
+
+	llmBase := os.Getenv("LLM_BASE")
+	payload, status, body, err := callLLMDebugPlan(llmBase, chatID, chat.Persona, "", msg.Content, history, topicContext, memory)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, jsonMap{
+			"error":       "llm_debug_failed",
+			"status_code": status,
+			"detail":      err.Error(),
+			"body":        body,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, jsonMap{
+		"ok":      true,
+		"chat_id": chatID,
+		"message": msg,
+		"debug":   payload,
 	})
 }
 
