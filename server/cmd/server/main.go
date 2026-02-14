@@ -1053,6 +1053,24 @@ func (s *Store) deleteLLMRetryJob(requestID string) error {
 	return err
 }
 
+func (s *Store) deleteLLMRetryJobsByChat(chatID string) error {
+	chatID = strings.TrimSpace(chatID)
+	if chatID == "" {
+		return nil
+	}
+	_, err := s.db.Exec(`DELETE FROM llm_retry_jobs WHERE chat_id=$1`, chatID)
+	return err
+}
+
+func (s *Store) deleteChat(chatID string) error {
+	chatID = strings.TrimSpace(chatID)
+	if chatID == "" {
+		return nil
+	}
+	_, err := s.db.Exec(`DELETE FROM chats WHERE id=$1`, chatID)
+	return err
+}
+
 func (s *Store) claimDueLLMRetryJobs(now time.Time, limit int) ([]LLMJob, error) {
 	if limit <= 0 {
 		limit = 100
@@ -4373,7 +4391,11 @@ func handleAdminChatRoutes(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(path, "/")
 	chatID := parts[0]
 	if len(parts) == 1 {
-		writeJSON(w, http.StatusNotFound, jsonMap{"error": "not found"})
+		if r.Method == http.MethodDelete {
+			handleAdminDeleteChat(w, r, chatID)
+			return
+		}
+		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
 		return
 	}
 	switch parts[1] {
@@ -4407,6 +4429,35 @@ func handleAdminChatRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
+}
+
+func handleAdminDeleteChat(w http.ResponseWriter, r *http.Request, chatID string) {
+	chat, err := store.getChatByID(chatID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if chat == nil {
+		writeJSON(w, http.StatusNotFound, jsonMap{"error": "chat not found"})
+		return
+	}
+	if err := store.deleteLLMRetryJobsByChat(chatID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if err := store.deleteChat(chatID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	if rdb != nil {
+		_ = rdb.Del(context.Background(), historyCacheKey(chatID)).Err()
+	}
+	publishEvent(ChatEvent{
+		Type:     "chat_deleted",
+		ChatID:   chatID,
+		ClientID: chat.ClientID,
+	})
+	writeJSON(w, http.StatusOK, jsonMap{"ok": true, "chat_id": chatID})
 }
 
 func handleAdminResendMessage(w http.ResponseWriter, r *http.Request, chatID, messageID string) {

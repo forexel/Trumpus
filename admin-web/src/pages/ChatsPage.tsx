@@ -35,6 +35,11 @@ export default function ChatsPage() {
     ws.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data)
+        if (payload?.type === 'chat_deleted' && payload?.chat_id) {
+          const deletedId = String(payload.chat_id)
+          setChats((prev) => prev.filter((chat) => chat.id !== deletedId))
+          return
+        }
         const chatId = payload?.chat_id as string | undefined
         const unread = payload?.unread_for_admin as number | undefined
         if (!chatId || typeof unread !== 'number') return
@@ -83,7 +88,12 @@ export default function ChatsPage() {
         )}
       </aside>
       <section className="chat-pane">
-        <ChatDetailPage chatId={activeChatId} />
+        <ChatDetailPage
+          chatId={activeChatId}
+          onDeleted={(deletedId) => {
+            setChats((prev) => prev.filter((chat) => chat.id !== deletedId))
+          }}
+        />
       </section>
     </div>
   )

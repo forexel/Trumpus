@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { fetchChatMessages, markChatRead, sendChatMessage, resendClientMessage, fetchMessageDebugPlan, getWsBase, Message, AdminChat } from '../lib/api'
+import { fetchChatMessages, markChatRead, sendChatMessage, resendClientMessage, fetchMessageDebugPlan, getWsBase, Message, AdminChat, deleteAdminChat } from '../lib/api'
 
 type ChatDetailProps = {
   chatId?: string
+  onDeleted?: (chatId: string) => void
 }
 
-export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) {
+export default function ChatDetailPage({ chatId: chatIdProp, onDeleted }: ChatDetailProps) {
+  const navigate = useNavigate()
   const { id } = useParams()
   const chatId = chatIdProp ?? id ?? ''
   const [chat, setChat] = useState<AdminChat | null>(null)
@@ -27,6 +29,7 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [actionError, setActionError] = useState('')
+  const [deletingChat, setDeletingChat] = useState(false)
   const markdownComponents = useMemo(
     () => ({
       p: ({ children }: { children: React.ReactNode }) => <p className="msg-text">{children}</p>,
@@ -252,6 +255,23 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
     }
   }
 
+  async function onDeleteChat() {
+    if (!chatId || deletingChat) return
+    const ok = window.confirm('Delete this chat permanently? This cannot be undone.')
+    if (!ok) return
+    setActionError('')
+    setDeletingChat(true)
+    try {
+      await deleteAdminChat(chatId)
+      onDeleted?.(chatId)
+      navigate('/chats')
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to delete chat')
+    } finally {
+      setDeletingChat(false)
+    }
+  }
+
   if (loading) {
     return <div className="card">Loading chat...</div>
   }
@@ -276,6 +296,11 @@ export default function ChatDetailPage({ chatId: chatIdProp }: ChatDetailProps) 
           <h1>{chat?.title ?? 'Chat'}</h1>
           <div className="muted">{chat?.client_name}</div>
         </div>
+        {chatId ? (
+          <button className="danger-btn" onClick={onDeleteChat} disabled={deletingChat}>
+            {deletingChat ? 'Deleting...' : 'Delete chat'}
+          </button>
+        ) : null}
       </div>
       {debugPayload ? (
         <div className="debug-panel">

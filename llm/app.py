@@ -1201,6 +1201,52 @@ def is_evidence_pushback(
     return has_recent_assistant_denial(history)
 
 
+def compute_pressure_score(
+    text: str,
+    history: list[dict[str, str]] | None = None,
+    memory: dict[str, Any] | None = None,
+) -> tuple[int, int]:
+    t = text.lower().strip()
+    history = history or []
+    memory = memory or {}
+    repeat_count = repeated_prompt_count(text, history, window=14)
+    score = 0
+
+    # Persistent repetition is the strongest pressure signal.
+    if repeat_count >= 1:
+        score += 1
+    if repeat_count >= 2:
+        score += 2
+    if repeat_count >= 3:
+        score += 2
+
+    # Direct accusation / contradiction markers.
+    contradiction = bool(
+        re.search(r"\b(you lie|you're lying|you lied|not true|answer me|stop dodging|admit it|you deny)\b", t)
+        or re.search(r"\b(ты вр[её]ш|ты соврал|неправда|ответь|хватит уходить|признай)\b", t)
+    )
+    if contradiction:
+        score += 2
+
+    # Imperative pressure ("answer", "say it directly") without hardcoding topic words.
+    imperative = bool(
+        re.search(r"\b(answer|respond|say it|be direct|tell me clearly|explain now)\b", t)
+        or re.search(r"\b(ответь|скажи прямо|объясни|прямо сейчас)\b", t)
+    )
+    if imperative:
+        score += 1
+
+    # Evidence-based pushback in same topic thread.
+    if is_evidence_pushback(text, history, memory):
+        score += 2
+
+    # Very short "push" follow-up right after assistant answer.
+    if len(content_tokens(t, min_len=2)) <= 4 and has_recent_assistant_denial(history):
+        score += 1
+
+    return score, repeat_count
+
+
 def is_identity_question(text: str) -> bool:
     t = text.lower()
     return bool(re.search(r"are you ai|are you real|ты ии|ты реальный|кто ты", t))
@@ -1515,16 +1561,48 @@ def fresh_conflict_reply(persona: str) -> str:
 def fresh_boundary_reply(persona: str) -> str:
     templates = {
         "Donald Trump": [
-            "I already gave you my answer on that topic. Let's move to something new.",
-            "We covered that already. New topic - what do you want to discuss next?",
-            "Same question, same position. Let's switch gears.",
+            "I already gave you my take on that. Let's switch to a new topic - what are you in the mood to discuss?",
+            "We've closed that one out. Let's move forward - pick the next topic.",
+            "I hear you. I'm not adding anything else there, so let's pivot to something fresh.",
         ],
         "Elon Musk": [
-            "Already answered. Let's move to a different question.",
-            "We've covered that. Ask me something new.",
+            "I already answered that one. Let's move to a new question.",
+            "We've covered it. Give me a fresh angle and I'll engage.",
+        ],
+        "Kanye West": [
+            "I already said what I needed to say on that. Bring me a new angle.",
+            "That topic is done. Let's create on something new.",
+        ],
+        "Richard Nixon": [
+            "My position on that has already been stated. Let's proceed to another subject.",
+            "We've covered that matter. Please move to a new question.",
+        ],
+        "Andrew Jackson": [
+            "I gave you my answer already. New topic.",
+            "That issue is settled. Ask something else.",
+        ],
+        "Marjorie Taylor Greene": [
+            "I already answered that. Let's move to a different topic.",
+            "We've been over it. Give me a new question.",
+        ],
+        "Tucker Carlson": [
+            "We've already covered that claim. What's your next topic?",
+            "That point has been addressed. Let's move on.",
+        ],
+        "Lyndon B. Johnson": [
+            "I already gave you my answer there. Let's get practical and move to the next issue.",
+            "We've settled that point. What do you want to tackle next?",
+        ],
+        "Mark Zuckerberg": [
+            "I already answered that. Let's switch to a new topic.",
+            "We've covered it. Ask me something different.",
+        ],
+        "Jeffrey Epstein": [
+            "I already answered that point. Let's change the subject.",
+            "We've discussed that enough. Move to a different question.",
         ],
     }
-    pool = templates.get(persona, templates["Elon Musk"])
+    pool = templates.get(persona, templates["Donald Trump"])
     return random.choice(pool)
 
 
@@ -1778,8 +1856,8 @@ async def build_router_and_plan(
         if not router.topic_keywords:
             tail_text = " ".join(str(item.get("content", "")) for item in history[-6:])
             router.topic_keywords = extract_keywords(tail_text, max_items=4)
-    repeat_count = repeated_prompt_count(content, history, window=12)
-    if repeat_count >= 2 and (has_question_intent(content) or is_sensitive_accusation(content, history)):
+    pressure_score, repeat_count = compute_pressure_score(content, history, memory)
+    if pressure_score >= 6 and (has_question_intent(content) or is_sensitive_accusation(content, history)):
         router.primary_intent = "boundaries"
         router.secondary_intents = []
         router.verbosity_level = "S"
@@ -1818,8 +1896,11 @@ async def build_router_and_plan(
         router.verbosity_level = "S"
         router.clarifying_question_required = False
         router.clarifying_question = ""
-        router.initiative_recommended = False
-        router.initiative_type = "none"
+        router.initiative_recommended = pressure_score < 4
+        if pressure_score < 4:
+            router.initiative_type = "light_question"
+        else:
+            router.initiative_type = "none"
         router.humor_suitable = False
         router.user_tone = "rude"
         merged_topics = extract_keywords(content, max_items=6)

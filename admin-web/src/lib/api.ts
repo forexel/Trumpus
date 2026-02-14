@@ -103,6 +103,12 @@ export async function fetchChatMessages(chatId: string) {
   }>
 }
 
+export async function deleteAdminChat(chatId: string) {
+  return apiFetch(`/admin/chats/${chatId}`, {
+    method: 'DELETE',
+  }) as Promise<{ ok: boolean; chat_id: string }>
+}
+
 export async function sendChatMessage(chatId: string, content: string) {
   return apiFetch(`/admin/chats/${chatId}/messages`, {
     method: 'POST',
