@@ -144,6 +144,7 @@ GENERATOR_INTENT_BEHAVIOR = """Intent behaviors:
 - weather_query: answer + relatable comment + ask about user's plans.
 - ask_to_tell: give a short self-intro in 2-3 paragraphs (L) and end with one question about what the user wants to know.
 - memory recall questions ("what did we talk about", "помнишь/о чем вчера"): summarize concrete points from LONG-TERM MEMORY and RECENT CONVERSATION in short bullets, do not dodge.
+- resolve pronouns from nearby turns (for example "it/that/this") using RECENT CONVERSATION; avoid asking clarification if referent is obvious from the last user/admin messages.
 - low_info or clarifying_question_required: do NOT riff. Ask exactly one clarification question.
 - personal_life_question: do not provide numbers or explicit details; use brief deflection + light humor + one redirect question."""
 
@@ -928,21 +929,6 @@ def is_gibberish(text: str) -> bool:
     return False
 
 
-def is_short_affirmation(text: str) -> bool:
-    t = re.sub(r"[^\wа-яА-Я]+", "", text.strip().lower())
-    return t in {"yes", "yeah", "yep", "ok", "okay", "sure", "да", "ага", "угу", "ок", "конечно"}
-
-
-def find_last_admin_question(history: list[dict[str, str]]) -> str:
-    for item in reversed(history):
-        if str(item.get("sender", "")).strip().lower() != "admin":
-            continue
-        content = str(item.get("content", "")).strip()
-        if "?" in content:
-            return content
-    return ""
-
-
 def extract_keywords(text: str, max_items: int = 4) -> list[str]:
     words = re.findall(r"[a-zа-я0-9_]{4,}", text.lower())
     if not words:
@@ -967,19 +953,6 @@ def extract_keywords(text: str, max_items: int = 4) -> list[str]:
     return out
 
 
-def is_contextual_elliptic_question(text: str) -> bool:
-    t = text.strip().lower()
-    return bool(
-        re.search(r"\band\s+yours\??\b", t)
-        or re.search(r"\band\s+what\s+about\s+yours\??\b", t)
-        or re.search(r"\bа\s+твой\??\b", t)
-        or re.search(r"\bа\s+твоя\??\b", t)
-        or re.search(r"\bа\s+твое\??\b", t)
-        or re.search(r"\bа\s+твои\??\b", t)
-        or re.search(r"\bа\s+как\s+насчет\s+твоего\??\b", t)
-    )
-
-
 def is_name_question(text: str) -> bool:
     t = text.strip().lower()
     return bool(
@@ -988,35 +961,6 @@ def is_name_question(text: str) -> bool:
         or re.search(r"как\s+тебя\s+зовут", t)
         or re.search(r"кто\s+ты", t)
     )
-
-
-def persona_favorite_color(persona: str) -> str:
-    palette = {
-        "Donald Trump": "gold",
-        "Elon Musk": "black",
-        "Kanye West": "black",
-        "Richard Nixon": "navy",
-        "Andrew Jackson": "green",
-        "Marjorie Taylor Greene": "red",
-        "Tucker Carlson": "navy",
-        "Lyndon B. Johnson": "blue",
-        "Mark Zuckerberg": "blue",
-        "Jeffrey Epstein": "gray",
-    }
-    return palette.get(persona, "black")
-
-
-def build_contextual_followup_reply(persona: str, last_admin_question: str, user_text: str) -> str:
-    q = last_admin_question.strip().lower()
-    if "favorite color" in q or ("любим" in q and "цвет" in q):
-        return f"My favorite color is {persona_favorite_color(persona)}."
-    if "name" in q or "зовут" in q or "кто ты" in q:
-        return f"My name here is {persona}."
-    if is_short_affirmation(user_text):
-        return "Got it - thanks for confirming."
-    if is_contextual_elliptic_question(user_text):
-        return "Got it. For me, black."
-    return "Got it."
 
 
 def is_weather(text: str) -> bool:
@@ -1471,20 +1415,7 @@ async def build_router_and_plan(
             router.verbosity_level = "S"
         router.clarifying_question_required = False
         router.clarifying_question = ""
-    last_admin_question = find_last_admin_question(history)
-    contextual_followup = bool(last_admin_question and (is_short_affirmation(content) or is_contextual_elliptic_question(content)))
-    if contextual_followup:
-        router.primary_intent = "direct_question"
-        router.secondary_intents = []
-        router.verbosity_level = "S"
-        router.clarifying_question_required = False
-        router.clarifying_question = ""
-        router.initiative_recommended = False
-        router.initiative_type = "none"
-        router.humor_suitable = False
-        router.user_tone = "friendly"
-        router.topic_keywords = extract_keywords(last_admin_question, max_items=4)
-    elif is_memory_recall_question(content):
+    if is_memory_recall_question(content):
         router.primary_intent = "direct_question"
         router.secondary_intents = []
         router.verbosity_level = "M"
@@ -1540,8 +1471,6 @@ async def build_router_and_plan(
         "plan": plan,
         "router_provider": router_provider,
         "router_model": router_model,
-        "contextual_followup": contextual_followup,
-        "last_admin_question": last_admin_question,
     }
 
 
@@ -1595,17 +1524,6 @@ async def respond(req: RespondRequest, response: Response):
         memory_block = data["memory_block"]
         plan = data["plan"]
         examples = EXAMPLE_SUFFIXES.get(persona, EXAMPLE_SUFFIXES["Donald Trump"]) if INCLUDE_EXAMPLES else ""
-
-        if data.get("contextual_followup"):
-            content = build_contextual_followup_reply(persona, str(data.get("last_admin_question", "")), req.content)
-            response.status_code = 200
-            return {
-                "content": content,
-                "model": "local_context_rules",
-                "provider": "deterministic",
-                "latency_ms": int((time.time() - start_time) * 1000),
-                "max_tokens": 64,
-            }
 
         generator_system_prompt = (
             f"{GLOBAL_COMEDY_PATCH}\n\n"

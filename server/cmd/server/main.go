@@ -200,25 +200,23 @@ func deferredRetryMaxAttempts() int {
 func deferredRetryDelay() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("LLM_DEFERRED_RETRY_DELAY_SEC"))
 	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-		if n > 120 {
-			n = 120
+		if n > 86400 {
+			n = 86400
 		}
 		return time.Duration(n) * time.Second
 	}
-	return 12 * time.Second
+	return 10 * time.Minute
 }
 
-func enqueueLLMJobAfter(delay time.Duration, job LLMJob) {
-	if delay <= 0 {
-		_ = enqueueLLMJob(job)
-		return
-	}
-	go func(j LLMJob, d time.Duration) {
-		time.Sleep(d)
-		if err := enqueueLLMJob(j); err != nil {
-			log.Printf("llm_deferred_enqueue_error req_id=%s chat_id=%s err=%v", j.RequestID, j.ChatID, err)
+func llmRetryPollInterval() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("LLM_RETRY_POLL_SEC"))
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		if n > 300 {
+			n = 300
 		}
-	}(job, delay)
+		return time.Duration(n) * time.Second
+	}
+	return 30 * time.Second
 }
 
 func isLLMPlaceholderResponse(content string) bool {
@@ -518,6 +516,15 @@ func (s *Store) migrate() error {
 			PRIMARY KEY (chat_id, topic_key, message_id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_chat_topic_refs_lookup ON chat_topic_refs(chat_id, topic_key, created_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS llm_retry_jobs (
+			request_id TEXT PRIMARY KEY,
+			chat_id TEXT NOT NULL,
+			run_at TIMESTAMPTZ NOT NULL,
+			payload JSONB NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_llm_retry_jobs_run_at ON llm_retry_jobs(run_at)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -1005,6 +1012,84 @@ func (s *Store) setSystemFlag(key, value string) error {
 		value,
 	)
 	return err
+}
+
+func (s *Store) upsertLLMRetryJob(job LLMJob, runAt time.Time) error {
+	if strings.TrimSpace(job.RequestID) == "" || strings.TrimSpace(job.ChatID) == "" {
+		return nil
+	}
+	payload, err := json.Marshal(job)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO llm_retry_jobs (request_id, chat_id, run_at, payload, updated_at)
+		 VALUES ($1, $2, $3, $4::jsonb, NOW())
+		 ON CONFLICT (request_id)
+		 DO UPDATE SET run_at=EXCLUDED.run_at, payload=EXCLUDED.payload, updated_at=NOW()`,
+		job.RequestID, job.ChatID, runAt.UTC(), string(payload),
+	)
+	return err
+}
+
+func (s *Store) deleteLLMRetryJob(requestID string) error {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return nil
+	}
+	_, err := s.db.Exec(`DELETE FROM llm_retry_jobs WHERE request_id=$1`, requestID)
+	return err
+}
+
+func (s *Store) claimDueLLMRetryJobs(now time.Time, limit int) ([]LLMJob, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(
+		`WITH due AS (
+			SELECT request_id, payload
+			FROM llm_retry_jobs
+			WHERE run_at <= $1
+			ORDER BY run_at
+			LIMIT $2
+			FOR UPDATE SKIP LOCKED
+		)
+		DELETE FROM llm_retry_jobs j
+		USING due
+		WHERE j.request_id = due.request_id
+		RETURNING due.payload`,
+		now.UTC(), limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]LLMJob, 0, limit)
+	for rows.Next() {
+		var payloadRaw []byte
+		if err := rows.Scan(&payloadRaw); err != nil {
+			return nil, err
+		}
+		var job LLMJob
+		if err := json.Unmarshal(payloadRaw, &job); err != nil {
+			continue
+		}
+		if strings.TrimSpace(job.RequestID) == "" || strings.TrimSpace(job.ChatID) == "" {
+			continue
+		}
+		out = append(out, job)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *Store) upsertTopicRef(chatID, topicKey, messageID string, createdAt time.Time) error {
@@ -2393,8 +2478,12 @@ func processLLMJob(job LLMJob) error {
 					next.ReplaceID = placeholder.ID
 					next.Attempts++
 					if next.Attempts <= deferredRetryMaxAttempts() {
-						log.Printf("llm_job_deferred_retry_enqueued req_id=%s chat_id=%s next_attempt=%d delay=%s", job.RequestID, job.ChatID, next.Attempts, deferredRetryDelay())
-						enqueueLLMJobAfter(deferredRetryDelay(), next)
+						runAt := time.Now().Add(deferredRetryDelay())
+						if err := store.upsertLLMRetryJob(next, runAt); err != nil {
+							log.Printf("llm_job_deferred_retry_persist_error req_id=%s chat_id=%s err=%v", job.RequestID, job.ChatID, err)
+						} else {
+							log.Printf("llm_job_deferred_retry_persisted req_id=%s chat_id=%s next_attempt=%d run_at=%s", job.RequestID, job.ChatID, next.Attempts, runAt.UTC().Format(time.RFC3339))
+						}
 					}
 				}
 				return nil
@@ -2403,8 +2492,12 @@ func processLLMJob(job LLMJob) error {
 			next := job
 			next.Attempts++
 			if next.Attempts <= deferredRetryMaxAttempts() {
-				log.Printf("llm_job_deferred_retry_requeued req_id=%s chat_id=%s next_attempt=%d delay=%s", job.RequestID, job.ChatID, next.Attempts, deferredRetryDelay())
-				enqueueLLMJobAfter(deferredRetryDelay(), next)
+				runAt := time.Now().Add(deferredRetryDelay())
+				if err := store.upsertLLMRetryJob(next, runAt); err != nil {
+					log.Printf("llm_job_deferred_retry_persist_error req_id=%s chat_id=%s err=%v", job.RequestID, job.ChatID, err)
+				} else {
+					log.Printf("llm_job_deferred_retry_requeued req_id=%s chat_id=%s next_attempt=%d run_at=%s", job.RequestID, job.ChatID, next.Attempts, runAt.UTC().Format(time.RFC3339))
+				}
 			}
 			return nil
 		}
@@ -2423,6 +2516,9 @@ func processLLMJob(job LLMJob) error {
 	if job.Source == "deferred_retry" && strings.TrimSpace(resp) != "" {
 		asked := firstLine(strings.TrimSpace(job.Content), 140)
 		resp = fmt.Sprintf("You asked: \"%s\" Earlier I had to step away. %s", asked, resp)
+	}
+	if err := store.deleteLLMRetryJob(job.RequestID); err != nil {
+		log.Printf("llm_job_retry_delete_error req_id=%s chat_id=%s err=%v", job.RequestID, job.ChatID, err)
 	}
 
 	if last, err := store.getLastAdminMessage(job.ChatID); err == nil && last != nil {
@@ -2794,10 +2890,47 @@ func backfillChatMemories() int {
 	return updated
 }
 
+func dispatchDueLLMRetryJobs() {
+	if store == nil {
+		return
+	}
+	jobs, err := store.claimDueLLMRetryJobs(time.Now(), 100)
+	if err != nil {
+		log.Printf("llm_retry_claim_error err=%v", err)
+		return
+	}
+	for _, job := range jobs {
+		job.Source = "deferred_retry"
+		if strings.TrimSpace(job.RequestID) == "" {
+			job.RequestID = nextID("retry")
+		}
+		if err := enqueueLLMJob(job); err != nil {
+			runAt := time.Now().Add(2 * time.Minute)
+			_ = store.upsertLLMRetryJob(job, runAt)
+			log.Printf("llm_retry_enqueue_error req_id=%s chat_id=%s err=%v", job.RequestID, job.ChatID, err)
+			continue
+		}
+		log.Printf("llm_retry_enqueued req_id=%s chat_id=%s", job.RequestID, job.ChatID)
+	}
+}
+
 func runWorker(ctx context.Context) error {
 	if rdb == nil {
 		return fmt.Errorf("redis not configured")
 	}
+	go func() {
+		dispatchDueLLMRetryJobs()
+		ticker := time.NewTicker(llmRetryPollInterval())
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				dispatchDueLLMRetryJobs()
+			}
+		}
+	}()
 	group := llmGroupName()
 	stream := llmStreamName()
 	consumer := fmt.Sprintf("worker-%s", nextID("c"))
