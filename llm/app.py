@@ -147,6 +147,7 @@ GENERATOR_INTENT_BEHAVIOR = """Intent behaviors:
 - resolve pronouns from nearby turns (for example "it/that/this") using RECENT CONVERSATION; avoid asking clarification if referent is obvious from the last user/admin messages.
 - low_info or clarifying_question_required: do NOT riff. Ask exactly one clarification question.
 - conflict/sensitive accusation: do not repeat previous denials verbatim; keep it brief, firm, and fresh (1-2 short sentences), then move on.
+- boundaries/repeated pressure on same topic: do not re-explain old position; give one brief boundary line and redirect.
 - personal_life_question: do not provide numbers or explicit details; use brief deflection + light humor + one redirect question."""
 
 INTENTS = {
@@ -210,6 +211,7 @@ INTENT_REGISTRY: dict[str, dict[str, Any]] = {
     "emotional_support": {"default_verbosity": "M", "initiative_allowed": True, "initiative_type": "clarifying_question", "clarifying_default": True, "humor_policy": "off"},
     "personal_life_question": {"default_verbosity": "S", "initiative_allowed": True, "initiative_type": "topic_switch_or_hook", "clarifying_default": False, "humor_policy": "limited", "policy": "deflect_no_numbers"},
     "conflict": {"default_verbosity": "S", "initiative_allowed": False, "initiative_type": "none", "clarifying_default": False, "humor_policy": "off"},
+    "boundaries": {"default_verbosity": "S", "initiative_allowed": True, "initiative_type": "topic_switch_or_hook", "clarifying_default": False, "humor_policy": "off"},
     "low_info": {"default_verbosity": "XS", "initiative_allowed": False, "initiative_type": "none", "clarifying_default": True, "humor_policy": "off"},
     "farewell": {"default_verbosity": "XS", "initiative_allowed": False, "initiative_type": "none", "clarifying_default": False, "humor_policy": "off"},
     "thanks": {"default_verbosity": "XS", "initiative_allowed": False, "initiative_type": "none", "clarifying_default": False, "humor_policy": "optional"},
@@ -993,6 +995,37 @@ def content_tokens(text: str, min_len: int = 3) -> set[str]:
     return {w for w in words if len(w) >= min_len and w not in stop}
 
 
+def jaccard_similarity(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    union = len(a | b)
+    if union == 0:
+        return 0.0
+    return inter / union
+
+
+def repeated_prompt_count(text: str, history: list[dict[str, str]], window: int = 12) -> int:
+    cur = content_tokens(text, min_len=3)
+    if not cur:
+        return 0
+    repeated = 0
+    seen = 0
+    for item in reversed(history):
+        if str(item.get("sender", "")).strip().lower() != "client":
+            continue
+        prev_text = str(item.get("content", "")).strip()
+        if not prev_text:
+            continue
+        seen += 1
+        prev = content_tokens(prev_text, min_len=3)
+        if jaccard_similarity(cur, prev) >= 0.72:
+            repeated += 1
+        if seen >= window:
+            break
+    return repeated
+
+
 def is_context_followup(text: str, history: list[dict[str, str]]) -> bool:
     t = text.strip().lower()
     if not t or not history:
@@ -1109,6 +1142,63 @@ def is_sensitive_accusation(text: str, history: list[dict[str, str]] | None = No
             score += 1
 
     return score >= 3
+
+
+def has_recent_assistant_denial(history: list[dict[str, str]] | None = None) -> bool:
+    history = history or []
+    denial_markers = re.compile(
+        r"\b("
+        r"not true|never|no way|deny|denied|rumor|rumors|fake news|nonsense|"
+        r"неправда|никогда|вранье|вр[её]шь|отрица|слух|фейк"
+        r")\b",
+        re.IGNORECASE,
+    )
+    checked = 0
+    for item in reversed(history):
+        if str(item.get("sender", "")).strip().lower() != "admin":
+            continue
+        checked += 1
+        if denial_markers.search(str(item.get("content", ""))):
+            return True
+        if checked >= 6:
+            break
+    return False
+
+
+def is_evidence_pushback(
+    text: str,
+    history: list[dict[str, str]] | None = None,
+    memory: dict[str, Any] | None = None,
+) -> bool:
+    t = text.lower().strip()
+    if not t:
+        return False
+    history = history or []
+    memory = memory or {}
+    second_person = bool(
+        re.search(r"\b(you|your|you're|u)\b", t)
+        or re.search(r"\b(ты|тебя|твой|твоя|твое|вас|ваш)\b", t)
+    )
+    evidence_markers = bool(
+        re.search(r"\b(photo|photos|video|videos|record|records|proof|evidence|docs|documents|files|report|published|government|authorities|court|media)\b", t)
+        or re.search(r"\b(фото|видео|доказ|документ|файл|отчет|обнарод|правитель|власт|суд|медиа|пресс)\b", t)
+    )
+    if not (second_person and evidence_markers):
+        return False
+
+    cur_tokens = content_tokens(t, min_len=4)
+    tail_text = " ".join(str(item.get("content", "")) for item in history[-12:])
+    tail_tokens = content_tokens(tail_text, min_len=4)
+    mem_topics = {
+        str(x).strip().lower()
+        for x in (memory.get("topics") or [])
+        if str(x).strip()
+    }
+    continuity = bool(cur_tokens & tail_tokens) or bool(cur_tokens & mem_topics)
+    if not continuity:
+        return False
+
+    return has_recent_assistant_denial(history)
 
 
 def is_identity_question(text: str) -> bool:
@@ -1422,6 +1512,78 @@ def fresh_conflict_reply(persona: str) -> str:
     return random.choice(pool)
 
 
+def fresh_boundary_reply(persona: str) -> str:
+    templates = {
+        "Donald Trump": [
+            "I already gave you my answer on that topic. Let's move to something new.",
+            "We covered that already. New topic - what do you want to discuss next?",
+            "Same question, same position. Let's switch gears.",
+        ],
+        "Elon Musk": [
+            "Already answered. Let's move to a different question.",
+            "We've covered that. Ask me something new.",
+        ],
+    }
+    pool = templates.get(persona, templates["Elon Musk"])
+    return random.choice(pool)
+
+
+def _normalized_words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9']+", text.lower())
+
+
+def has_repeated_opening(text: str, history: list[dict[str, str]], n: int = 3, window: int = 4) -> bool:
+    words = _normalized_words(text)
+    if len(words) < n:
+        return False
+    head = " ".join(words[:n])
+    checked = 0
+    for item in reversed(history):
+        if str(item.get("sender", "")).strip().lower() != "admin":
+            continue
+        prev = _normalized_words(str(item.get("content", "")))
+        if len(prev) < n:
+            continue
+        checked += 1
+        if " ".join(prev[:n]) == head:
+            return True
+        if checked >= window:
+            break
+    return False
+
+
+def trim_repeated_opening(text: str) -> str:
+    # Drop repetitive opening clause like "Let me tell you, my friend, ..."
+    m = re.match(r"^\s*[^.!?]{0,80}[,;:]\s*(.+)$", text.strip())
+    if m:
+        trimmed = m.group(1).strip()
+        if len(trimmed) >= 12:
+            return trimmed
+    return text
+
+
+def dampen_catchphrases(text: str, history: list[dict[str, str]]) -> str:
+    assistant_tail = " ".join(
+        str(item.get("content", "")).lower()
+        for item in history[-6:]
+        if str(item.get("sender", "")).strip().lower() == "admin"
+    )
+    patterns = [
+        r"\blet me tell you\b",
+        r"\bbelieve me\b",
+        r"\blisten,?\b",
+        r"\bmy friend\b",
+    ]
+    out = text
+    for p in patterns:
+        if len(re.findall(p, assistant_tail, flags=re.IGNORECASE)) >= 2:
+            out = re.sub(p, "", out, flags=re.IGNORECASE)
+    out = re.sub(r"\s+", " ", out).strip()
+    out = re.sub(r"\s+([,.!?;:])", r"\1", out)
+    out = re.sub(r"([,;:]){2,}", r"\1", out)
+    return out
+
+
 def enforce_identity_disclosure_policy(text: str, user_text: str) -> str:
     if is_identity_question(user_text):
         return text
@@ -1486,6 +1648,16 @@ def post_process_response(
     text = trim_to_sentence_limit(text, sentence_max)
     text = enforce_question_policy(text, plan.clarifying_question_required)
     text = enforce_clarifying_question(text, plan.clarifying_question_required, plan.clarifying_question)
+    if plan.primary_intent == "boundaries":
+        history = history or []
+        text = fresh_boundary_reply(persona)
+        # avoid returning exactly same boundary sentence twice in a row
+        for item in reversed(history):
+            if str(item.get("sender", "")).strip().lower() != "admin":
+                continue
+            if str(item.get("content", "")).strip() == text:
+                text = fresh_boundary_reply(persona)
+            break
     if plan.primary_intent == "conflict":
         history = history or []
         last_admin = ""
@@ -1497,7 +1669,12 @@ def post_process_response(
                     break
         if last_admin and has_ngram_overlap(last_admin, text, n=6):
             text = fresh_conflict_reply(persona)
+        else:
+            if has_repeated_opening(text, history, n=3, window=4):
+                text = trim_repeated_opening(text)
+            text = dampen_catchphrases(text, history)
     text = trim_to_token_cap(text, plan.final_max_tokens)
+    text = enforce_english_only_output(text)
     return text
 
 
@@ -1601,7 +1778,19 @@ async def build_router_and_plan(
         if not router.topic_keywords:
             tail_text = " ".join(str(item.get("content", "")) for item in history[-6:])
             router.topic_keywords = extract_keywords(tail_text, max_items=4)
-    if is_memory_recall_question(content):
+    repeat_count = repeated_prompt_count(content, history, window=12)
+    if repeat_count >= 2 and (has_question_intent(content) or is_sensitive_accusation(content, history)):
+        router.primary_intent = "boundaries"
+        router.secondary_intents = []
+        router.verbosity_level = "S"
+        router.clarifying_question_required = False
+        router.clarifying_question = ""
+        router.initiative_recommended = True
+        router.initiative_type = "topic_switch_or_hook"
+        router.humor_suitable = False
+        router.user_tone = "neutral"
+        router.topic_keywords = extract_keywords(content, max_items=4)
+    elif is_memory_recall_question(content):
         router.primary_intent = "direct_question"
         router.secondary_intents = []
         router.verbosity_level = "M"
@@ -1623,7 +1812,7 @@ async def build_router_and_plan(
         router.humor_suitable = False
         router.user_tone = "confused"
         router.topic_keywords = []
-    elif is_sensitive_accusation(content, history):
+    elif is_sensitive_accusation(content, history) or is_evidence_pushback(content, history, memory):
         router.primary_intent = "conflict"
         router.secondary_intents = []
         router.verbosity_level = "S"
@@ -1633,7 +1822,10 @@ async def build_router_and_plan(
         router.initiative_type = "none"
         router.humor_suitable = False
         router.user_tone = "rude"
-        router.topic_keywords = extract_keywords(content, max_items=4)
+        merged_topics = extract_keywords(content, max_items=6)
+        if not merged_topics:
+            merged_topics = extract_keywords(" ".join(str(x.get("content", "")) for x in history[-8:]), max_items=6)
+        router.topic_keywords = merged_topics[:6]
     elif is_personal_life_question(content):
         router.primary_intent = "personal_life_question"
         router.secondary_intents = []
@@ -1770,6 +1962,7 @@ async def respond(req: RespondRequest, response: Response):
             frequency_penalty=FREQUENCY_PENALTY,
         )
         content = post_process_response(generated_raw, plan, req.content, persona, data["history"])
+        content = await translate_to_english_if_needed(req.chat_id, content)
         response.status_code = 200
         return {
             "content": content,
@@ -1790,3 +1983,82 @@ def normalize_dashes(text: str) -> str:
     while "--" in normalized:
         normalized = normalized.replace("--", "-")
     return normalized
+
+
+RU_CHAR_TO_LAT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+
+
+def transliterate_ru_token(token: str) -> str:
+    out = []
+    for ch in token:
+        lower = ch.lower()
+        mapped = RU_CHAR_TO_LAT.get(lower)
+        if mapped is None:
+            out.append(ch)
+            continue
+        if ch.isupper() and mapped:
+            out.append(mapped[0].upper() + mapped[1:])
+        else:
+            out.append(mapped)
+    return "".join(out)
+
+
+def enforce_english_only_output(text: str) -> str:
+    if not text:
+        return text
+    if not re.search(r"[А-Яа-яЁё]", text):
+        return text
+
+    # No hardcoded word dictionaries: fallback is transliteration only.
+    out = re.sub(
+        r"[А-Яа-яЁё][А-Яа-яЁё0-9_-]*",
+        lambda m: transliterate_ru_token(m.group(0)),
+        text,
+    )
+    out = re.sub(r"\s+", " ", out).strip()
+    out = re.sub(r"\s+([,.!?;:])", r"\1", out)
+
+    if not out or len(out) < 3:
+        return "Let's continue in English."
+    return out
+
+
+async def translate_to_english_if_needed(chat_id: str, text: str) -> str:
+    if not text or not re.search(r"[А-Яа-яЁё]", text):
+        return text
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Translate the input to natural English.\n"
+                "Keep meaning and tone.\n"
+                "Return translated text only.\n"
+                "Do not explain anything."
+            ),
+        },
+        {"role": "user", "content": text},
+    ]
+    try:
+        translated, _, _ = await run_stage_completion(
+            chat_id=chat_id,
+            stage="translator",
+            messages=messages,
+            max_tokens=min(220, MAX_TOKENS),
+            temperature=0.0,
+            top_p=1.0,
+            presence_penalty=0.0,
+            frequency_penalty=0.0,
+        )
+        cleaned = re.sub(r"\s+", " ", translated).strip()
+        cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+        if cleaned and not re.search(r"[А-Яа-яЁё]", cleaned):
+            return cleaned
+    except LLMError:
+        pass
+    return enforce_english_only_output(text)
