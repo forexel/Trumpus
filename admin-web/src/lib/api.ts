@@ -36,6 +36,7 @@ export type AnalyticsBucket = {
   dau: number
   new_chats: number
   new_messages: number
+  home_visitors: number
 }
 
 export type AnalyticsResponse = {
@@ -55,6 +56,7 @@ export type AnalyticsResponse = {
     new_registrations: { value: number; delta: number }
     new_chats: { value: number; delta: number }
     new_messages: { value: number; delta: number }
+    home_visitors: { value: number; delta: number }
   }
 }
 

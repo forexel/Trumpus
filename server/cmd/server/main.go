@@ -537,6 +537,14 @@ func (s *Store) migrate() error {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_llm_retry_jobs_run_at ON llm_retry_jobs(run_at)`,
+		`CREATE TABLE IF NOT EXISTS page_visits (
+			page TEXT NOT NULL,
+			client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+			visit_day DATE NOT NULL,
+			visited_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (page, client_id, visit_day)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_page_visits_page_visited_at ON page_visits(page, visited_at)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -847,6 +855,34 @@ func (s *Store) countActiveClientsByMessagesBetween(start, end time.Time) (int64
 		FROM messages m
 		JOIN chats c ON c.id = m.chat_id
 		WHERE m.sender = 'client' AND m.created_at >= $1 AND m.created_at < $2`, start, end).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func (s *Store) trackPageVisit(clientID, page string, visitedAt time.Time) error {
+	clientID = strings.TrimSpace(clientID)
+	page = strings.TrimSpace(strings.ToLower(page))
+	if clientID == "" || page == "" {
+		return fmt.Errorf("client id and page are required")
+	}
+	visitDay := time.Date(visitedAt.UTC().Year(), visitedAt.UTC().Month(), visitedAt.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	_, err := s.db.Exec(`INSERT INTO page_visits (page, client_id, visit_day, visited_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (page, client_id, visit_day)
+		DO UPDATE SET visited_at = EXCLUDED.visited_at`, page, clientID, visitDay, visitedAt.UTC())
+	return err
+}
+
+func (s *Store) countUniquePageVisitorsBetween(page string, start, end time.Time) (int64, error) {
+	page = strings.TrimSpace(strings.ToLower(page))
+	if page == "" {
+		return 0, fmt.Errorf("page is required")
+	}
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(DISTINCT client_id)
+		FROM page_visits
+		WHERE page=$1 AND visited_at >= $2 AND visited_at < $3`, page, start, end).Scan(&total); err != nil {
 		return 0, err
 	}
 	return total, nil
@@ -3292,6 +3328,35 @@ func handleClientLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, jsonMap{"ok": true})
 }
 
+func handleClientPageViewAnalytics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
+		return
+	}
+	clientID := getClientIDFromContext(r.Context())
+	if clientID == "" {
+		writeJSON(w, http.StatusUnauthorized, jsonMap{"error": "unauthorized"})
+		return
+	}
+	var req struct {
+		Page string `json:"page"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
+		return
+	}
+	page := strings.TrimSpace(strings.ToLower(req.Page))
+	if page != "home" {
+		writeJSON(w, http.StatusBadRequest, jsonMap{"error": "unsupported page"})
+		return
+	}
+	if err := store.trackPageVisit(clientID, page, time.Now().UTC()); err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, jsonMap{"ok": true})
+}
+
 func handleAdminSession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
@@ -3461,6 +3526,7 @@ func main() {
 	mux.HandleFunc("/api/v1/admin/analytics", wrap(requireAdminAuth(handleAdminAnalytics)))
 	mux.HandleFunc("/api/v1/admin/chats/", wrap(requireAdminAuth(handleAdminChatRoutes)))
 
+	mux.HandleFunc("/api/v1/analytics/page-view", wrap(requireClientAuth(handleClientPageViewAnalytics)))
 	mux.HandleFunc("/api/v1/clients/", wrap(requireClientAuth(handleClientRoutes)))
 	mux.HandleFunc("/api/v1/chats/", wrap(requireClientAuth(handleChatRoutes)))
 	mux.HandleFunc("/api/v1/ws", handleWS)
@@ -4236,11 +4302,16 @@ func metricsForWindow(start, end time.Time) (jsonMap, error) {
 	if err != nil {
 		return nil, err
 	}
+	homeVisitors, err := store.countUniquePageVisitorsBetween("home", start, end)
+	if err != nil {
+		return nil, err
+	}
 	return jsonMap{
 		"new_registrations": newRegistrations,
 		"dau":               dau,
 		"new_chats":         newChats,
 		"new_messages":      newMessages,
+		"home_visitors":     homeVisitors,
 	}, nil
 }
 
@@ -4351,6 +4422,16 @@ func handleAdminAnalytics(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
 	}
+	todayHomeVisitors, err := store.countUniquePageVisitorsBetween("home", todayStart, todayEnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	yesterdayHomeVisitors, err := store.countUniquePageVisitorsBetween("home", yesterdayStart, yesterdayEnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
 
 	writeJSON(w, http.StatusOK, jsonMap{
 		"day": dayStart.Format("2006-01-02"),
@@ -4377,6 +4458,10 @@ func handleAdminAnalytics(w http.ResponseWriter, r *http.Request) {
 			"new_messages": jsonMap{
 				"value": todayMessages,
 				"delta": todayMessages - yesterdayMessages,
+			},
+			"home_visitors": jsonMap{
+				"value": todayHomeVisitors,
+				"delta": todayHomeVisitors - yesterdayHomeVisitors,
 			},
 		},
 	})

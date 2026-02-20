@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { fetchChats, fetchMessages, getClientId, getChatSeenAt, ChatSummary, deleteChat, createChat, sendMessage, logout } from '../lib/api'
+import { fetchChats, fetchMessages, getClientId, getChatSeenAt, ChatSummary, deleteChat, createChat, sendMessage, logout, trackPageView } from '../lib/api'
 import { useTheme } from '../lib/useTheme'
 import { PERSONAS, Persona } from './NewChatPage'
 import trumpAvatar from '../assets/DonaldTrump.png'
@@ -132,6 +132,12 @@ export default function ChatsPage() {
   useEffect(() => {
     loadChats()
   }, [navigate])
+
+  useEffect(() => {
+    trackPageView('home').catch(() => {
+      // Non-critical analytics event.
+    })
+  }, [])
 
   useEffect(() => {
     if (!isOpen) return

@@ -601,6 +601,15 @@ export async function fetchChats(clientId: string) {
   }
 }
 
+export async function trackPageView(page: 'home') {
+  const res = await fetchWithAuth(`${API_BASE}/analytics/page-view`, {
+    method: 'POST',
+    body: JSON.stringify({ page }),
+  })
+  if (!res.ok) throw new Error('Failed to track page view')
+  return (await res.json()) as { ok: boolean }
+}
+
 export async function createChat(clientId: string, persona: string) {
   const res = await fetchWithAuth(`${API_BASE}/clients/${clientId}/chats`, {
     method: 'POST',

@@ -946,8 +946,7 @@ body::before {
   display: flex;
   align-items: flex-end;
   gap: 10px;
-  padding: 6px 16px;
-  padding-bottom: 6px;
+  padding: 10px 16px;
   background: var(--bg-secondary);
   border-top: 1px solid var(--border);
 }
@@ -958,7 +957,7 @@ body::before {
   right: 0;
   bottom: 0;
   z-index: 12;
-  padding-bottom: 0;
+  padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
   margin-top: auto;
   transform: translateY(calc(-1 * var(--kb-offset, 0px)));
 }

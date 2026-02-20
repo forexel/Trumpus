@@ -72,6 +72,7 @@ export default function AnalyticsPage() {
               <div className="stat-card"><div className="stat-label">DAU (wrote message)</div><div className="stat-value">{formatNum(data.day_metrics.dau)}</div></div>
               <div className="stat-card"><div className="stat-label">New chats</div><div className="stat-value">{formatNum(data.day_metrics.new_chats)}</div></div>
               <div className="stat-card"><div className="stat-label">New messages total</div><div className="stat-value">{formatNum(data.day_metrics.new_messages)}</div></div>
+              <div className="stat-card"><div className="stat-label">Unique home visitors</div><div className="stat-value">{formatNum(data.day_metrics.home_visitors)}</div></div>
             </div>
           </section>
 
@@ -97,12 +98,13 @@ export default function AnalyticsPage() {
               <div className="stat-card"><div className="stat-label">Active users (wrote message)</div><div className="stat-value">{formatNum(data.period_metrics.dau)}</div></div>
               <div className="stat-card"><div className="stat-label">New chats</div><div className="stat-value">{formatNum(data.period_metrics.new_chats)}</div></div>
               <div className="stat-card"><div className="stat-label">New messages total</div><div className="stat-value">{formatNum(data.period_metrics.new_messages)}</div></div>
+              <div className="stat-card"><div className="stat-label">Unique home visitors</div><div className="stat-value">{formatNum(data.period_metrics.home_visitors)}</div></div>
             </div>
           </section>
 
           <section>
             <h2>Today vs Yesterday</h2>
-            <div className="analytics-grid three-cols">
+            <div className="analytics-grid four-cols">
               <div className="stat-card">
                 <div className="stat-label">New registrations</div>
                 <div className="stat-value">{formatNum(data.today.new_registrations.value)}</div>
@@ -117,6 +119,11 @@ export default function AnalyticsPage() {
                 <div className="stat-label">Total messages</div>
                 <div className="stat-value">{formatNum(data.today.new_messages.value)}</div>
                 <div className="stat-meta"><Delta value={data.today.new_messages.delta} /></div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Unique home visitors</div>
+                <div className="stat-value">{formatNum(data.today.home_visitors.value)}</div>
+                <div className="stat-meta"><Delta value={data.today.home_visitors.delta} /></div>
               </div>
             </div>
           </section>
