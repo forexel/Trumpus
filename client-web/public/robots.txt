@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /chats/
+
+Sitemap: https://trumpus.tech/sitemap.xml

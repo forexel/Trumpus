@@ -105,6 +105,93 @@ body::before {
   overflow: hidden;
 }
 
+.landing-page {
+  min-height: 100dvh;
+  padding: clamp(24px, 4vw, 56px) clamp(18px, 4vw, 64px);
+  background: radial-gradient(circle at 20% 20%, #2a3550 0%, #0f1728 40%, #080d17 100%);
+  color: #f5f7fb;
+  display: grid;
+  gap: 24px;
+  overflow-y: auto;
+}
+
+.landing-hero {
+  max-width: 760px;
+}
+
+.landing-hero h1 {
+  margin: 0 0 12px;
+  font-size: clamp(32px, 6vw, 56px);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.landing-hero p {
+  margin: 0;
+  color: #cdd8eb;
+  font-size: clamp(16px, 2vw, 20px);
+  line-height: 1.5;
+}
+
+.landing-actions {
+  margin-top: 22px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.landing-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 18px;
+  border-radius: 10px;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.landing-btn.primary {
+  background: #f04438;
+  color: #fff;
+}
+
+.landing-btn.secondary {
+  border: 1px solid #405273;
+  color: #dbe7ff;
+  background: rgba(17, 24, 39, 0.4);
+}
+
+.landing-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.landing-card {
+  border: 1px solid #2e3b55;
+  border-radius: 14px;
+  background: rgba(17, 24, 39, 0.55);
+  padding: 16px;
+}
+
+.landing-card h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.landing-card p {
+  margin: 0;
+  color: #c6d2e6;
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .landing-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ============================================
    MOBILE PAGE LAYOUT
    ============================================ */

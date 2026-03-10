@@ -14,6 +14,8 @@ import (
 	htmltmpl "html/template"
 	"io"
 	"log"
+	"math"
+	mrand "math/rand"
 	"net"
 	"net/http"
 	"net/mail"
@@ -470,12 +472,16 @@ func (s *Store) migrate() error {
 		`CREATE TABLE IF NOT EXISTS clients (
 			id TEXT PRIMARY KEY,
 			name TEXT UNIQUE NOT NULL,
-			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			is_bot BOOLEAN NOT NULL DEFAULT FALSE
 		)`,
 		`CREATE TABLE IF NOT EXISTS users (
 			email TEXT PRIMARY KEY,
-			password TEXT NOT NULL
+			password TEXT NOT NULL,
+			is_bot BOOLEAN NOT NULL DEFAULT FALSE
 		)`,
+		`ALTER TABLE clients ADD COLUMN IF NOT EXISTS is_bot BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_bot BOOLEAN NOT NULL DEFAULT FALSE`,
 		`CREATE TABLE IF NOT EXISTS password_resets (
 			token_hash TEXT PRIMARY KEY,
 			email TEXT NOT NULL,
@@ -568,11 +574,27 @@ func (s *Store) getOrCreateClientByEmail(email string) (*Client, error) {
 		return nil, err
 	}
 	id := nextID("client")
-	_, err = s.db.Exec(`INSERT INTO clients (id, name) VALUES ($1, $2)`, id, normalized)
+	_, err = s.db.Exec(`INSERT INTO clients (id, name, is_bot) VALUES ($1, $2, FALSE)`, id, normalized)
 	if err != nil {
 		return nil, err
 	}
 	return &Client{ID: id, Name: normalized}, nil
+}
+
+func (s *Store) createBotClient(name string, createdAt time.Time) (*Client, error) {
+	normalized, err := normalizeEmail(name)
+	if err != nil {
+		return nil, err
+	}
+	client := &Client{
+		ID:   nextID("client"),
+		Name: normalized,
+	}
+	_, err = s.db.Exec(`INSERT INTO clients (id, name, created_at, is_bot) VALUES ($1, $2, $3, TRUE)`, client.ID, client.Name, createdAt.UTC())
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
 }
 
 func (s *Store) registerUser(email, password string) (*Client, bool, error) {
@@ -580,7 +602,7 @@ func (s *Store) registerUser(email, password string) (*Client, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	_, err = s.db.Exec(`INSERT INTO users (email, password) VALUES ($1, $2)`, email, hashed)
+	_, err = s.db.Exec(`INSERT INTO users (email, password, is_bot) VALUES ($1, $2, FALSE)`, email, hashed)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate") {
 			return nil, false, nil
@@ -592,6 +614,42 @@ func (s *Store) registerUser(email, password string) (*Client, bool, error) {
 		return nil, false, err
 	}
 	return client, true, nil
+}
+
+func (s *Store) registerBotUser(email, password string, createdAt time.Time) (*Client, bool, error) {
+	normalized, err := normalizeEmail(email)
+	if err != nil {
+		return nil, false, err
+	}
+	hashed, err := hashPassword(password)
+	if err != nil {
+		return nil, false, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`INSERT INTO users (email, password, is_bot) VALUES ($1, $2, TRUE)`, normalized, hashed)
+	if err != nil {
+		if strings.Contains(err.Error(), "duplicate") {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	clientID := nextID("client")
+	_, err = tx.Exec(`INSERT INTO clients (id, name, created_at, is_bot) VALUES ($1, $2, $3, TRUE)`, clientID, normalized, createdAt.UTC())
+	if err != nil {
+		if strings.Contains(err.Error(), "duplicate") {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	return &Client{ID: clientID, Name: normalized}, true, nil
 }
 
 func (s *Store) authenticateUser(email, password string) (*Client, bool, error) {
@@ -801,9 +859,27 @@ func (s *Store) createChat(clientID, title, persona string) (*Chat, error) {
 	return chat, nil
 }
 
+func (s *Store) createChatAt(clientID, title, persona string, createdAt time.Time) (*Chat, error) {
+	chat := &Chat{
+		ID:             nextID("chat"),
+		ClientID:       clientID,
+		Title:          strings.TrimSpace(title),
+		Persona:        strings.TrimSpace(persona),
+		UnreadForAdmin: 0,
+		CreatedAt:      createdAt.UTC(),
+		LastMessageAt:  createdAt.UTC(),
+	}
+	_, err := s.db.Exec(`INSERT INTO chats (id, client_id, title, persona, unread_for_admin, created_at, last_message_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`, chat.ID, chat.ClientID, chat.Title, chat.Persona, chat.UnreadForAdmin, chat.CreatedAt, chat.LastMessageAt)
+	if err != nil {
+		return nil, err
+	}
+	return chat, nil
+}
+
 func (s *Store) countClients() (int64, error) {
 	var total int64
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM clients`).Scan(&total); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM clients WHERE name NOT LIKE 'visitor.%@bot.local'`).Scan(&total); err != nil {
 		return 0, err
 	}
 	return total, nil
@@ -827,7 +903,7 @@ func (s *Store) countMessages() (int64, error) {
 
 func (s *Store) countNewClientsBetween(start, end time.Time) (int64, error) {
 	var total int64
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM clients WHERE created_at >= $1 AND created_at < $2`, start, end).Scan(&total); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM clients WHERE created_at >= $1 AND created_at < $2 AND name NOT LIKE 'visitor.%@bot.local'`, start, end).Scan(&total); err != nil {
 		return 0, err
 	}
 	return total, nil
@@ -886,6 +962,122 @@ func (s *Store) countUniquePageVisitorsBetween(page string, start, end time.Time
 		return 0, err
 	}
 	return total, nil
+}
+
+func (s *Store) countDailyRegistrationsBetween(start, end time.Time) (map[string]int64, error) {
+	rows, err := s.db.Query(`SELECT ((created_at AT TIME ZONE 'UTC')::date) AS d, COUNT(*)
+		FROM clients
+		WHERE created_at >= $1 AND created_at < $2
+		  AND name NOT LIKE 'visitor.%@bot.local'
+		GROUP BY d
+		ORDER BY d`, start.UTC(), end.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]int64)
+	for rows.Next() {
+		var day time.Time
+		var count int64
+		if err := rows.Scan(&day, &count); err != nil {
+			return nil, err
+		}
+		out[day.UTC().Format("2006-01-02")] = count
+	}
+	return out, nil
+}
+
+func (s *Store) countDailyChatsBetween(start, end time.Time) (map[string]int64, error) {
+	rows, err := s.db.Query(`SELECT ((created_at AT TIME ZONE 'UTC')::date) AS d, COUNT(*)
+		FROM chats
+		WHERE created_at >= $1 AND created_at < $2
+		GROUP BY d
+		ORDER BY d`, start.UTC(), end.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]int64)
+	for rows.Next() {
+		var day time.Time
+		var count int64
+		if err := rows.Scan(&day, &count); err != nil {
+			return nil, err
+		}
+		out[day.UTC().Format("2006-01-02")] = count
+	}
+	return out, nil
+}
+
+func (s *Store) countDailyDAUBetween(start, end time.Time) (map[string]int64, error) {
+	rows, err := s.db.Query(`SELECT ((m.created_at AT TIME ZONE 'UTC')::date) AS d, COUNT(DISTINCT c.client_id)
+		FROM messages m
+		JOIN chats c ON c.id = m.chat_id
+		WHERE m.sender='client' AND m.created_at >= $1 AND m.created_at < $2
+		GROUP BY d
+		ORDER BY d`, start.UTC(), end.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]int64)
+	for rows.Next() {
+		var day time.Time
+		var count int64
+		if err := rows.Scan(&day, &count); err != nil {
+			return nil, err
+		}
+		out[day.UTC().Format("2006-01-02")] = count
+	}
+	return out, nil
+}
+
+func (s *Store) countDailyMessagesBetween(start, end time.Time) (map[string]int64, error) {
+	rows, err := s.db.Query(`SELECT ((created_at AT TIME ZONE 'UTC')::date) AS d, COUNT(*)
+		FROM messages
+		WHERE created_at >= $1 AND created_at < $2
+		GROUP BY d
+		ORDER BY d`, start.UTC(), end.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]int64)
+	for rows.Next() {
+		var day time.Time
+		var count int64
+		if err := rows.Scan(&day, &count); err != nil {
+			return nil, err
+		}
+		out[day.UTC().Format("2006-01-02")] = count
+	}
+	return out, nil
+}
+
+func (s *Store) countDailyUniquePageVisitorsBetween(page string, start, end time.Time) (map[string]int64, error) {
+	page = strings.TrimSpace(strings.ToLower(page))
+	if page == "" {
+		return nil, fmt.Errorf("page is required")
+	}
+	rows, err := s.db.Query(`SELECT visit_day, COUNT(DISTINCT client_id)
+		FROM page_visits
+		WHERE page=$1 AND visit_day >= $2::date AND visit_day < $3::date
+		GROUP BY visit_day
+		ORDER BY visit_day`, page, start.UTC(), end.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]int64)
+	for rows.Next() {
+		var day time.Time
+		var count int64
+		if err := rows.Scan(&day, &count); err != nil {
+			return nil, err
+		}
+		out[day.UTC().Format("2006-01-02")] = count
+	}
+	return out, nil
 }
 
 func (s *Store) listMessages(chatID string) ([]*Message, error) {
@@ -3524,6 +3716,7 @@ func main() {
 	mux.HandleFunc("/api/v1/admin/clients", wrap(requireAdminAuth(handleAdminClients)))
 	mux.HandleFunc("/api/v1/admin/chats", wrap(requireAdminAuth(handleAdminChats)))
 	mux.HandleFunc("/api/v1/admin/analytics", wrap(requireAdminAuth(handleAdminAnalytics)))
+	mux.HandleFunc("/api/v1/admin/synthetic/generate", wrap(requireAdminAuth(handleAdminSyntheticGenerate)))
 	mux.HandleFunc("/api/v1/admin/chats/", wrap(requireAdminAuth(handleAdminChatRoutes)))
 
 	mux.HandleFunc("/api/v1/analytics/page-view", wrap(requireClientAuth(handleClientPageViewAnalytics)))
@@ -4315,6 +4508,558 @@ func metricsForWindow(start, end time.Time) (jsonMap, error) {
 	}, nil
 }
 
+func buildDaySeries(start, end time.Time, dayCounts map[string]int64) []jsonMap {
+	if dayCounts == nil {
+		dayCounts = map[string]int64{}
+	}
+	out := make([]jsonMap, 0)
+	for d := start.UTC(); d.Before(end.UTC()); d = d.AddDate(0, 0, 1) {
+		key := d.Format("2006-01-02")
+		out = append(out, jsonMap{
+			"day":   key,
+			"value": dayCounts[key],
+		})
+	}
+	return out
+}
+
+type syntheticMessage struct {
+	Sender  string `json:"sender"`
+	Content string `json:"content"`
+}
+
+type syntheticDialog struct {
+	Title    string             `json:"title"`
+	Persona  string             `json:"persona"`
+	Messages []syntheticMessage `json:"messages"`
+}
+
+func syntheticPersonas() []string {
+	return []string{
+		"Donald Trump",
+		"Elon Musk",
+		"Kanye West",
+		"Richard Nixon",
+		"Andrew Jackson",
+		"Marjorie Taylor Greene",
+		"Tucker Carlson",
+		"Lyndon B. Johnson",
+		"Mark Zuckerberg",
+	}
+}
+
+func syntheticRandomAt(rng *mrand.Rand, start, end time.Time) time.Time {
+	if !end.After(start) {
+		return start.UTC()
+	}
+	span := end.Sub(start)
+	return start.UTC().Add(time.Duration(rng.Int63n(int64(span))))
+}
+
+func synthClamp(v, minV, maxV int) int {
+	if v < minV {
+		return minV
+	}
+	if v > maxV {
+		return maxV
+	}
+	return v
+}
+
+func synthEvenTurns(rng *mrand.Rand, minTurns, maxTurns int) int {
+	if minTurns < 2 {
+		minTurns = 2
+	}
+	if minTurns%2 != 0 {
+		minTurns++
+	}
+	if maxTurns < minTurns {
+		maxTurns = minTurns
+	}
+	if maxTurns%2 != 0 {
+		maxTurns--
+	}
+	if maxTurns < minTurns {
+		maxTurns = minTurns
+	}
+	steps := ((maxTurns - minTurns) / 2) + 1
+	return minTurns + (2 * rng.Intn(steps))
+}
+
+func synthBotEmail(rng *mrand.Rand) string {
+	first := []string{
+		"alex", "oliver", "liam", "noah", "ethan", "mason", "logan", "lucas", "james", "henry",
+		"sofia", "emma", "mia", "ava", "isabella", "amelia", "harper", "evelyn", "chloe", "zoe",
+	}
+	last := []string{
+		"stone", "walker", "reed", "brooks", "carter", "foster", "wells", "bennett", "morris", "harris",
+		"cooper", "ward", "parker", "cole", "bailey", "hayes", "quinn", "sullivan", "porter", "watson",
+	}
+	domain := []string{"mailnova.app", "inboxlane.net", "northmail.io", "brightpost.co", "skymailhub.net"}
+	local := fmt.Sprintf("%s.%s%d%x",
+		first[rng.Intn(len(first))],
+		last[rng.Intn(len(last))],
+		100+rng.Intn(9900),
+		rng.Intn(0xffff),
+	)
+	return strings.ToLower(local + "@" + domain[rng.Intn(len(domain))])
+}
+
+func synthTopicSet(rng *mrand.Rand) (string, []string, []string) {
+	pairs := []struct {
+		title string
+		user  []string
+		bot   []string
+	}{
+		{
+			title: "Career decision and next step",
+			user: []string{
+				"I'm deciding between two job offers and keep overthinking.",
+				"Offer A pays more, offer B has a stronger team.",
+				"I care about growth in the next 12 months.",
+				"How can I compare them without bias?",
+				"I also worry about burning out in role A.",
+				"What should I ask each manager before deciding?",
+			},
+			bot: []string{
+				"Let's frame this as compensation, learning velocity, and downside risk.",
+				"Write a simple scorecard with 5 criteria and weight growth highest.",
+				"Pick one irreversible risk for each option and test it this week.",
+				"Ask about onboarding plan, success metrics, and team turnover.",
+				"If burnout risk is real, cap work hours and verify manager support.",
+				"Make the call with a deadline so uncertainty doesn't drag on.",
+			},
+		},
+		{
+			title: "Launching a small product",
+			user: []string{
+				"I'm trying to launch a micro product in two weeks.",
+				"I have a landing page and one rough demo.",
+				"I'm unsure what to ship first.",
+				"How many features should be in MVP?",
+				"I need a realistic launch checklist.",
+				"I can spend about one hour per day on this.",
+			},
+			bot: []string{
+				"Ship one painful use case end to end, skip extras.",
+				"Use a 3-feature cap: core action, result view, basic feedback loop.",
+				"Prioritize by time-to-value, not by technical elegance.",
+				"Checklist: onboarding, event tracking, payment test, support reply template.",
+				"Run 5 user tests before launch and patch only blocking issues.",
+				"With one hour daily, lock tasks the night before and keep scope frozen.",
+			},
+		},
+		{
+			title: "Relationship conversation prep",
+			user: []string{
+				"I need to have a difficult conversation with my partner.",
+				"I want to stay calm and not sound accusatory.",
+				"I usually shut down when tension rises.",
+				"Can you suggest a structure for the talk?",
+				"What should I avoid saying?",
+				"I'd like a short script to start with.",
+			},
+			bot: []string{
+				"Start with intent: connection first, blame never.",
+				"Use 'I feel / I need / I request' in one sentence each.",
+				"When tension rises, pause for 20 seconds and restate one concrete point.",
+				"Avoid words like 'always' and 'never'; they escalate defensiveness.",
+				"Ask one open question after each point and actually wait for the answer.",
+				"Opening script: I care about us and want to fix this together.",
+			},
+		},
+		{
+			title: "Learning plan for a new skill",
+			user: []string{
+				"I want to learn a new skill but keep dropping consistency.",
+				"I can study 30 minutes on weekdays.",
+				"I don't know how to measure progress.",
+				"Could we design a 4-week plan?",
+				"I need it to stay practical, not theoretical.",
+				"How do I stay accountable without overcomplicating it?",
+			},
+			bot: []string{
+				"Great, we'll use a repeatable loop: learn, apply, review.",
+				"Week plan: 3 short lessons plus 2 practice sessions.",
+				"Progress metric: one completed artifact per week.",
+				"At week end, write a short retrospective with one improvement point.",
+				"Keep theory to 20 percent and practice to 80 percent.",
+				"Use a visible tracker and share status with one accountability partner.",
+			},
+		},
+	}
+	pick := pairs[rng.Intn(len(pairs))]
+	return pick.title, pick.user, pick.bot
+}
+
+func synthFallbackDialog(rng *mrand.Rand, turns int, persona string) syntheticDialog {
+	title, userPhrases, botPhrases := synthTopicSet(rng)
+	if turns < 2 {
+		turns = 2
+	}
+	if turns%2 != 0 {
+		turns++
+	}
+	msgs := make([]syntheticMessage, 0, turns)
+	for j := 0; j < turns; j++ {
+		if j%2 == 0 {
+			msgs = append(msgs, syntheticMessage{
+				Sender:  "client",
+				Content: userPhrases[(j/2)%len(userPhrases)],
+			})
+		} else {
+			msgs = append(msgs, syntheticMessage{
+				Sender:  "admin",
+				Content: botPhrases[(j/2)%len(botPhrases)],
+			})
+		}
+	}
+	return syntheticDialog{
+		Title:    title,
+		Persona:  persona,
+		Messages: msgs,
+	}
+}
+
+func sanitizeSyntheticContent(text string) string {
+	out := strings.TrimSpace(text)
+	if out == "" {
+		return ""
+	}
+	reLeadNum := regexp.MustCompile(`^\s*[#\(\[]?\d+[\]\)]?[:\.\-\s]+`)
+	reTailNum := regexp.MustCompile(`\s*\(#\d+\)\s*$`)
+	out = reLeadNum.ReplaceAllString(out, "")
+	out = reTailNum.ReplaceAllString(out, "")
+	return strings.TrimSpace(out)
+}
+
+func extractJSONPayload(raw string) string {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return ""
+	}
+	if strings.HasPrefix(text, "```") {
+		text = strings.TrimPrefix(text, "```json")
+		text = strings.TrimPrefix(text, "```")
+		text = strings.TrimSuffix(strings.TrimSpace(text), "```")
+		text = strings.TrimSpace(text)
+	}
+	startObj := strings.Index(text, "{")
+	startArr := strings.Index(text, "[")
+	start := -1
+	if startObj >= 0 && startArr >= 0 {
+		if startObj < startArr {
+			start = startObj
+		} else {
+			start = startArr
+		}
+	} else if startObj >= 0 {
+		start = startObj
+	} else if startArr >= 0 {
+		start = startArr
+	}
+	if start >= 0 {
+		return strings.TrimSpace(text[start:])
+	}
+	return text
+}
+
+func generateSyntheticDialogsBatch(day string, count int, minTurns, maxTurns int, rng *mrand.Rand) []syntheticDialog {
+	personas := syntheticPersonas()
+	dialogs := make([]syntheticDialog, count)
+	specLines := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		turns := synthEvenTurns(rng, minTurns, maxTurns)
+		persona := personas[rng.Intn(len(personas))]
+		specLines = append(specLines, fmt.Sprintf("%d) persona=%s turns=%d", i+1, persona, turns))
+		dialogs[i] = syntheticDialog{Persona: persona, Messages: make([]syntheticMessage, 0, turns)}
+	}
+
+	llmBase := strings.TrimSpace(os.Getenv("LLM_BASE"))
+	if llmBase == "" {
+		for i := range dialogs {
+			turns := synthEvenTurns(rng, minTurns, maxTurns)
+			dialogs[i] = synthFallbackDialog(rng, turns, dialogs[i].Persona)
+		}
+		return dialogs
+	}
+
+	prompt := "Generate realistic short chats as strict JSON. " +
+		"Return one JSON object exactly in this format: " +
+		`{"dialogs":[{"title":"...","persona":"...","messages":[{"sender":"client","content":"..."},{"sender":"admin","content":"..."}]}]}. ` +
+		"Rules: sender must be only client/admin, no markdown, no code fences, no comments, no extra keys."
+	content := fmt.Sprintf("Day=%s. Build %d dialogs. Keep each dialog exactly with requested turns.\n%s",
+		day, count, strings.Join(specLines, "\n"))
+	raw, _, _, err := callLLM(llmBase, "synthetic-"+day, "Synthetic Generator", prompt, content, nil, nil, llmMemory{})
+	if err != nil {
+		log.Printf("synthetic_dialogs_llm_error err=%v", err)
+	} else {
+		payload := extractJSONPayload(raw)
+		var parsed struct {
+			Dialogs []syntheticDialog `json:"dialogs"`
+		}
+		if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
+			log.Printf("synthetic_dialogs_parse_error err=%v", err)
+		} else if len(parsed.Dialogs) > 0 {
+			for i := 0; i < count; i++ {
+				if i >= len(parsed.Dialogs) {
+					break
+				}
+				d := parsed.Dialogs[i]
+				if strings.TrimSpace(d.Persona) == "" {
+					d.Persona = dialogs[i].Persona
+				}
+				minEven := minTurns
+				if minEven < 2 {
+					minEven = 2
+				}
+				if minEven%2 != 0 {
+					minEven++
+				}
+				maxEven := maxTurns
+				if maxEven < minEven {
+					maxEven = minEven
+				}
+				if maxEven%2 != 0 {
+					maxEven--
+				}
+				if maxEven < minEven {
+					maxEven = minEven
+				}
+				if len(d.Messages) < minEven {
+					continue
+				}
+				targetLen := len(d.Messages)
+				if targetLen > maxEven {
+					targetLen = maxEven
+				}
+				if targetLen%2 != 0 {
+					targetLen--
+				}
+				if targetLen < minEven {
+					continue
+				}
+				valid := make([]syntheticMessage, 0, targetLen)
+				for idx := 0; idx < targetLen; idx++ {
+					sender := "client"
+					if idx%2 == 1 {
+						sender = "admin"
+					}
+					content := ""
+					if idx < len(d.Messages) {
+						content = sanitizeSyntheticContent(d.Messages[idx].Content)
+					}
+					if content == "" {
+						fallback := synthFallbackDialog(rng, targetLen, d.Persona)
+						content = fallback.Messages[idx].Content
+					}
+					valid = append(valid, syntheticMessage{Sender: sender, Content: content})
+				}
+				d.Messages = valid
+				if strings.TrimSpace(d.Title) == "" {
+					d.Title = synthFallbackDialog(rng, targetLen, d.Persona).Title
+				}
+				dialogs[i] = d
+			}
+		}
+	}
+	for i := range dialogs {
+		if len(dialogs[i].Messages) == 0 {
+			turns := synthEvenTurns(rng, minTurns, maxTurns)
+			persona := dialogs[i].Persona
+			if strings.TrimSpace(persona) == "" {
+				persona = personas[rng.Intn(len(personas))]
+			}
+			dialogs[i] = synthFallbackDialog(rng, turns, persona)
+		}
+	}
+	return dialogs
+}
+
+func handleAdminSyntheticGenerate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		Day                 string  `json:"day"`
+		VisitsTarget        int     `json:"visits_target"`
+		RegistrationsTarget int     `json:"registrations_target"`
+		RegistrationRatio   float64 `json:"registration_ratio"`
+		MinTurns            int     `json:"min_turns"`
+		MaxTurns            int     `json:"max_turns"`
+	}
+	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if len(strings.TrimSpace(string(body))) > 0 {
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid json"})
+			return
+		}
+	}
+
+	day := time.Now().UTC()
+	if strings.TrimSpace(req.Day) != "" {
+		parsed, err := parseDateUTC(req.Day)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, jsonMap{"error": "invalid day, expected YYYY-MM-DD"})
+			return
+		}
+		day = parsed
+	}
+	dayStart, dayEnd := dayBoundsUTC(day)
+	seed := dayStart.UnixNano() ^ time.Now().UTC().UnixNano()
+	rng := mrand.New(mrand.NewSource(seed))
+
+	visitsTarget := req.VisitsTarget
+	if visitsTarget <= 0 {
+		visitsTarget = 700 + rng.Intn(91) - 45
+	}
+	visitsTarget = synthClamp(visitsTarget, 120, 4000)
+
+	ratio := req.RegistrationRatio
+	if ratio <= 0 {
+		ratio = 0.10
+	}
+	if ratio > 0.6 {
+		ratio = 0.6
+	}
+
+	registrationsTarget := req.RegistrationsTarget
+	if registrationsTarget <= 0 {
+		base := int(math.Round(float64(visitsTarget) * ratio))
+		jitterMax := int(math.Round(float64(base) * 0.10))
+		if jitterMax < 1 {
+			jitterMax = 1
+		}
+		registrationsTarget = base + rng.Intn(jitterMax*2+1) - jitterMax
+	}
+	registrationsTarget = synthClamp(registrationsTarget, 8, visitsTarget)
+	if visitsTarget < registrationsTarget {
+		visitsTarget = registrationsTarget
+	}
+	minTurns := req.MinTurns
+	if minTurns <= 0 {
+		minTurns = 2
+	}
+	maxTurns := req.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = 20
+	}
+	if maxTurns < minTurns {
+		maxTurns = minTurns
+	}
+	maxTurns = synthClamp(maxTurns, minTurns, 30)
+	if minTurns%2 != 0 {
+		minTurns++
+	}
+	if maxTurns%2 != 0 {
+		maxTurns--
+	}
+	if maxTurns < minTurns {
+		maxTurns = minTurns
+	}
+
+	type regClient struct {
+		client *Client
+	}
+	registered := make([]regClient, 0, registrationsTarget)
+
+	for i := 0; i < registrationsTarget; i++ {
+		createdAt := syntheticRandomAt(rng, dayStart, dayEnd)
+		email := synthBotEmail(rng)
+		password := fmt.Sprintf("Synt!%d%x", time.Now().UnixNano(), i+1)
+		client, ok, err := store.registerBotUser(email, password, createdAt)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "failed to create synthetic users"})
+			return
+		}
+		if !ok || client == nil {
+			continue
+		}
+		registered = append(registered, regClient{client: client})
+		_ = store.trackPageVisit(client.ID, "home", createdAt)
+	}
+
+	extraVisitors := visitsTarget - len(registered)
+	if extraVisitors < 0 {
+		extraVisitors = 0
+	}
+	for i := 0; i < extraVisitors; i++ {
+		createdAt := syntheticRandomAt(rng, dayStart, dayEnd)
+		name := fmt.Sprintf("visitor.%s.%d.%d@bot.local", dayStart.Format("20060102"), i+1, rng.Intn(999999))
+		client, err := store.createBotClient(name, createdAt)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "failed to create synthetic visitors"})
+			return
+		}
+		_ = store.trackPageVisit(client.ID, "home", createdAt)
+	}
+
+	dialogs := generateSyntheticDialogsBatch(dayStart.Format("2006-01-02"), len(registered), minTurns, maxTurns, rng)
+	createdChats := 0
+	createdMessages := 0
+	for i := range registered {
+		d := syntheticDialog{
+			Title:   "Synthetic chat",
+			Persona: "Donald Trump",
+			Messages: []syntheticMessage{
+				{Sender: "client", Content: "Hello"},
+				{Sender: "admin", Content: "Hi!"},
+			},
+		}
+		if i < len(dialogs) {
+			d = dialogs[i]
+		}
+		chatAt := syntheticRandomAt(rng, dayStart, dayEnd)
+		chat, err := store.createChatAt(registered[i].client.ID, d.Title, d.Persona, chatAt)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "failed to create synthetic chats"})
+			return
+		}
+		createdChats++
+		lastAt := chatAt
+		elapsed := time.Duration(0)
+		for idx, msg := range d.Messages {
+			content := strings.TrimSpace(msg.Content)
+			if content == "" {
+				continue
+			}
+			elapsed += time.Duration(30+rng.Intn(210)) * time.Second
+			at := chatAt.Add(elapsed)
+			if at.After(dayEnd.Add(-time.Second)) {
+				at = dayEnd.Add(-time.Second)
+			}
+			sender := strings.ToLower(strings.TrimSpace(msg.Sender))
+			if sender != "client" && sender != "admin" {
+				if idx%2 == 0 {
+					sender = "client"
+				} else {
+					sender = "admin"
+				}
+			}
+			created, err := store.insertMessage(chat.ID, sender, content, at)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "failed to create synthetic messages"})
+				return
+			}
+			lastAt = created.CreatedAt
+			createdMessages++
+		}
+		_ = store.updateChatLastMessage(chat.ID, lastAt)
+	}
+
+	writeJSON(w, http.StatusOK, jsonMap{
+		"ok":                    true,
+		"day":                   dayStart.Format("2006-01-02"),
+		"visits_target":         visitsTarget,
+		"registrations_target":  registrationsTarget,
+		"registrations_created": len(registered),
+		"chats_created":         createdChats,
+		"messages_created":      createdMessages,
+		"note":                  "Synthetic data is written only to internal DB metrics. External analytics systems are not emulated.",
+	})
+}
+
 func handleAdminAnalytics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, jsonMap{"error": "method not allowed"})
@@ -4367,6 +5112,31 @@ func handleAdminAnalytics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	periodMetrics, err := metricsForWindow(periodStart, periodEnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	seriesVisits, err := store.countDailyUniquePageVisitorsBetween("home", periodStart, periodEnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	seriesRegs, err := store.countDailyRegistrationsBetween(periodStart, periodEnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	seriesChats, err := store.countDailyChatsBetween(periodStart, periodEnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	seriesDAU, err := store.countDailyDAUBetween(periodStart, periodEnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
+		return
+	}
+	seriesMessages, err := store.countDailyMessagesBetween(periodStart, periodEnd)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "server error"})
 		return
@@ -4463,6 +5233,13 @@ func handleAdminAnalytics(w http.ResponseWriter, r *http.Request) {
 				"value": todayHomeVisitors,
 				"delta": todayHomeVisitors - yesterdayHomeVisitors,
 			},
+		},
+		"series": jsonMap{
+			"visits_by_day":        buildDaySeries(periodStart, periodEnd, seriesVisits),
+			"registrations_by_day": buildDaySeries(periodStart, periodEnd, seriesRegs),
+			"dau_by_day":           buildDaySeries(periodStart, periodEnd, seriesDAU),
+			"chats_by_day":         buildDaySeries(periodStart, periodEnd, seriesChats),
+			"messages_by_day":      buildDaySeries(periodStart, periodEnd, seriesMessages),
 		},
 	})
 }

@@ -9,6 +9,7 @@ import GoogleCallbackPage from './pages/GoogleCallbackPage'
 import NewChatPage from './pages/NewChatPage'
 import RegisterPage from './pages/RegisterPage'
 import ResetPasswordPage from './pages/ResetPasswordPage'
+import LandingPage from './pages/LandingPage'
 
 export default function App() {
   const location = useLocation()
@@ -138,7 +139,7 @@ export default function App() {
             element={
               authed
                 ? <Navigate to={homeRedirect} replace />
-                : <Navigate to="/login" replace />
+                : <LandingPage />
             }
           />
           <Route path="/login" element={authed ? <Navigate to={homeRedirect} replace /> : <LoginPage />} />

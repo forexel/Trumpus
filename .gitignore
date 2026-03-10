@@ -19,6 +19,8 @@ yarn-error.log*
 
 # Build outputs
 /dist/
+/admin-web/dist/
+/client-web/dist/
 /build/
 
 # Coverage

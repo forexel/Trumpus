@@ -26,7 +26,7 @@ body {
 .app {
   display: grid;
   grid-template-columns: 220px 1fr;
-  height: 100%;
+  height: 100vh;
   min-height: 100vh;
 }
 
@@ -77,10 +77,11 @@ body {
 
 .content {
   padding: 24px;
-  min-height: 100vh;
-  height: 100%;
+  min-height: 0;
+  height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
 }
 
 .analytics-page h1 {
@@ -95,6 +96,31 @@ body {
 .analytics-sections {
   display: grid;
   gap: 8px;
+  padding-bottom: 28px;
+}
+
+.tabs-row {
+  display: inline-flex;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px;
+  width: fit-content;
+  background: #fff;
+}
+
+.tab-btn {
+  margin: 0;
+  padding: 8px 14px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+}
+
+.tab-btn.active {
+  color: var(--primary);
+  border-color: var(--border);
+  background: #f4f7ff;
 }
 
 .section-head {
@@ -113,6 +139,10 @@ body {
   min-width: 180px;
   margin: 0;
   padding: 8px 10px;
+}
+
+.section-head button {
+  margin-top: 0;
 }
 
 .period-head {
@@ -171,6 +201,79 @@ body {
   font-size: 12px;
 }
 
+.chart-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  min-height: 340px;
+}
+
+.chart-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.line-chart {
+  display: block;
+  width: 100%;
+  height: 250px;
+}
+
+.chart-foot {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.chart-empty {
+  min-height: 250px;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+}
+
+.chart-axis-label {
+  fill: #7b8794;
+  font-size: 11px;
+}
+
+.chart-grid-line {
+  stroke: #e7ebf3;
+  stroke-width: 1;
+}
+
+.chart-hover-line {
+  stroke: #9aa7bd;
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+.chart-tooltip-bg {
+  fill: #111827;
+  opacity: 0.92;
+}
+
+.chart-tooltip-title {
+  fill: #e5e7eb;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.chart-tooltip-text {
+  fill: #f9fafb;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.analytics-grid.charts-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .delta {
   color: var(--muted);
   font-weight: 600;
@@ -193,6 +296,10 @@ body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
   }
+
+  .analytics-grid.charts-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -206,9 +313,19 @@ body {
   }
 
   .analytics-grid.four-cols,
-  .analytics-grid.three-cols {
+  .analytics-grid.three-cols,
+  .analytics-grid.charts-grid {
     grid-template-columns: 1fr;
     width: 100%;
+  }
+
+  .tabs-row {
+    width: 100%;
+  }
+
+  .tab-btn {
+    flex: 1;
+    text-align: center;
   }
 }
 

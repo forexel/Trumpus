@@ -39,6 +39,11 @@ export type AnalyticsBucket = {
   home_visitors: number
 }
 
+export type AnalyticsSeriesPoint = {
+  day: string
+  value: number
+}
+
 export type AnalyticsResponse = {
   day: string
   period: {
@@ -57,6 +62,13 @@ export type AnalyticsResponse = {
     new_chats: { value: number; delta: number }
     new_messages: { value: number; delta: number }
     home_visitors: { value: number; delta: number }
+  }
+  series: {
+    visits_by_day: AnalyticsSeriesPoint[]
+    registrations_by_day: AnalyticsSeriesPoint[]
+    dau_by_day: AnalyticsSeriesPoint[]
+    chats_by_day: AnalyticsSeriesPoint[]
+    messages_by_day: AnalyticsSeriesPoint[]
   }
 }
 
@@ -142,4 +154,24 @@ export async function markChatRead(chatId: string) {
 export async function fetchAnalytics(day: string, from: string, to: string) {
   const q = new URLSearchParams({ day, from, to })
   return apiFetch(`/admin/analytics?${q.toString()}`) as Promise<AnalyticsResponse>
+}
+
+export async function generateSyntheticDay(day: string, visitsTarget?: number) {
+  const payload: { day: string; visits_target?: number } = { day }
+  if (Number.isFinite(visitsTarget) && (visitsTarget ?? 0) > 0) {
+    payload.visits_target = Math.floor(visitsTarget as number)
+  }
+  return apiFetch('/admin/synthetic/generate', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }) as Promise<{
+    ok: boolean
+    day: string
+    visits_target: number
+    registrations_target: number
+    registrations_created: number
+    chats_created: number
+    messages_created: number
+    note: string
+  }>
 }

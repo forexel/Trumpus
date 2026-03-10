@@ -4,6 +4,15 @@
 
 trumpus.tech {
   route {
+    handle /admin {
+      redir https://admin.trumpus.tech/ 302
+    }
+
+    handle /admin/* {
+      uri strip_prefix /admin
+      redir https://admin.trumpus.tech{uri} 302
+    }
+
     handle /api/v1/health {
       rewrite * /health
       reverse_proxy trumpus_api:8000
