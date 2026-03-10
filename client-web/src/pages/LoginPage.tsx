@@ -50,9 +50,6 @@ export default function LoginPage() {
         </div>
         <div className="auth-card">
           <h1>Welcome back to Trumpus</h1>
-          <p className="auth-subtitle">
-            Sign in to continue your AI chats, return to saved persona conversations, and pick up where you left off.
-          </p>
           <form onSubmit={onSubmit} className="form">
             <label htmlFor="email">E-mail</label>
             <input
