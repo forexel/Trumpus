@@ -16,7 +16,7 @@ export default function LandingPage() {
           and continue dialogs from any device.
         </p>
         <div className="landing-actions">
-          <Link to="/register" className="landing-btn primary">Create Account</Link>
+          <Link to="/register" className="landing-btn primary">Create account</Link>
           <Link to="/login" className="landing-btn secondary">Sign In</Link>
         </div>
       </div>
@@ -24,7 +24,7 @@ export default function LandingPage() {
       <div className="landing-grid">
         <article className="landing-card">
           <h2>Fast Start</h2>
-          <p>Register, open a new chat, and get the first AI response in a few clicks.</p>
+          <p>Register, open a new chat, and get the first response in a few clicks.</p>
         </article>
         <article className="landing-card">
           <h2>Chat History</h2>
@@ -32,7 +32,7 @@ export default function LandingPage() {
         </article>
         <article className="landing-card">
           <h2>Multi Persona</h2>
-          <p>Use different assistant personas for brainstorming and daily tasks.</p>
+          <p>Use different chats with several personas to satisfy your curiosity.</p>
         </article>
       </div>
     </section>
