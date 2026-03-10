@@ -126,6 +126,13 @@ body::before {
   letter-spacing: -0.02em;
 }
 
+.landing-hero h2 {
+  margin: 0 0 14px;
+  font-size: clamp(18px, 2.4vw, 28px);
+  line-height: 1.2;
+  color: #f2b84a;
+}
+
 .landing-hero p {
   margin: 0;
   color: #cdd8eb;

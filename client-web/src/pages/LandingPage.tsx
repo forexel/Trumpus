@@ -10,6 +10,7 @@ export default function LandingPage() {
     <section className="landing-page">
       <div className="landing-hero">
         <h1>Trumpus AI Chats</h1>
+        <h2>World Star Chats</h2>
         <p>
           Trumpus is a web app where you can create AI chats, keep conversation history,
           and continue dialogs from any device.
