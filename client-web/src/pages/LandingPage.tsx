@@ -12,7 +12,7 @@ export default function LandingPage() {
         <h1>Trumpus AI Chats</h1>
         <h2>World Star Chats</h2>
         <p>
-          Trumpus is a web app where you can create AI chats, keep conversation history,
+          Trumpus is a web app where you can speak with real like person to keep conversation history,
           and continue dialogs from any device.
         </p>
         <div className="landing-actions">
