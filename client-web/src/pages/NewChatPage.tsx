@@ -13,6 +13,7 @@ import lbjAvatar from '../assets/LyndonBJohnson.png'
 import zuckAvatar from '../assets/MarkZuckerberg.png'
 import epsteinAvatar from '../assets/JeffreyEpstein.png'
 import eagleIcon from '../assets/eagle.png'
+import { trackEvent } from '../lib/analytics'
 
 // Available personas for selection
 export const PERSONAS = [
@@ -143,6 +144,7 @@ export default function NewChatPage() {
       setLoading(true)
       try {
         const chat = await createChat(clientId, persona.name)
+        trackEvent('new_chat_started', { persona: persona.name, source: 'new_chat_page_empty' })
         navigate(`/chats/${chat.id}`)
       } finally {
         setLoading(false)
@@ -154,6 +156,7 @@ export default function NewChatPage() {
     setLoading(true)
     try {
       const chat = await createChat(clientId, persona.name)
+      trackEvent('new_chat_started', { persona: persona.name, source: 'new_chat_page_with_message' })
       await sendMessage(chat.id, message, persona.name)
       navigate(`/chats/${chat.id}`)
     } finally {
@@ -206,6 +209,14 @@ export default function NewChatPage() {
       </header>
 
       <main className="mobile-content new-chat-content">
+        <div className="page-intro">
+          <h1>Start a new AI chat</h1>
+          <p>Choose a persona, open a new conversation, and begin an interactive AI dialogue in seconds.</p>
+          <small>
+            Create a character-style conversation for entertainment, brainstorming, creative thinking, or everyday
+            interaction.
+          </small>
+        </div>
         <div className="persona-select-block">
           <div className="persona-select-title">Start new chat with...</div>
           <div className={`persona-select-list ${isOpen ? 'open' : ''}`}>

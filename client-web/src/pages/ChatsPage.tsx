@@ -14,6 +14,7 @@ import lbjAvatar from '../assets/LyndonBJohnson.png'
 import zuckAvatar from '../assets/MarkZuckerberg.png'
 import epsteinAvatar from '../assets/JeffreyEpstein.png'
 import eagleIcon from '../assets/eagle.png'
+import { trackEvent } from '../lib/analytics'
 
 const PERSONA_AVATARS: Record<string, string> = {
   'Donald Trump': trumpAvatar,
@@ -228,6 +229,7 @@ export default function ChatsPage() {
     setSending(true)
     try {
       const chat = await createChat(clientId, selectedPersona.name)
+      trackEvent('new_chat_started', { persona: selectedPersona.name, source: 'chat_history_empty_state' })
       await sendMessage(chat.id, message, selectedPersona.name)
       navigate(`/chats/${chat.id}`)
     } finally {
@@ -262,6 +264,10 @@ export default function ChatsPage() {
       </header>
 
       <main className="mobile-content">
+        <div className="page-intro">
+          <h1>Your chat history</h1>
+          <p>Browse your saved AI conversations, reopen persona-based chats, and continue any dialogue whenever you want.</p>
+        </div>
         {loading ? (
           <div className="empty-state">
             <img src={eagleIcon} alt="Loading" className="eagle-loader" />
@@ -276,6 +282,7 @@ export default function ChatsPage() {
           </div>
         ) : !hasChats ? (
           <div className="empty-state persona-empty">
+            <p className="empty-subtitle">No saved chats yet. Start your first AI character chat to build your conversation history.</p>
             <div className="persona-select-block">
               <div className="persona-select-title">Start new chat with...</div>
               <div className={`persona-select-list ${isOpen ? 'open' : ''}`} ref={selectRef}>

@@ -119,6 +119,22 @@ html, body {
   color: #002868;
 }
 
+.auth-subtitle {
+  margin: -6px 0 12px;
+  text-align: center;
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.auth-subtitle-small {
+  margin: -4px 0 14px;
+  text-align: center;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .auth-card .form {
   display: flex;
   flex-direction: column;

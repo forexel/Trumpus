@@ -10,6 +10,7 @@ import NewChatPage from './pages/NewChatPage'
 import RegisterPage from './pages/RegisterPage'
 import ResetPasswordPage from './pages/ResetPasswordPage'
 import LandingPage from './pages/LandingPage'
+import { initAnalytics, pageview } from './lib/analytics'
 
 export default function App() {
   const location = useLocation()
@@ -55,6 +56,12 @@ export default function App() {
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [location.pathname])
+
+  useEffect(() => {
+    initAnalytics()
+    const path = `${location.pathname}${location.search || ''}`
+    pageview(path)
+  }, [location.pathname, location.search])
 
   useEffect(() => {
     const root = document.documentElement

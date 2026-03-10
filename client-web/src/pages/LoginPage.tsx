@@ -5,6 +5,7 @@ import googleIcon from '../assets/google.svg'
 import appleIcon from '../assets/Apple_Icon.svg'
 import googlePlayIcon from '../assets/GooglePlay_Icon.svg'
 import eagleIcon from '../assets/eagle.png'
+import { trackEvent } from '../lib/analytics'
 
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000/api/v1'
 
@@ -30,6 +31,7 @@ export default function LoginPage() {
       setLoading(true)
       const data = await login(email, password)
       void data
+      trackEvent('login_success', { method: 'password' })
       navigate('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')
@@ -47,7 +49,10 @@ export default function LoginPage() {
           <span className="auth-brand-text">Trumpus</span>
         </div>
         <div className="auth-card">
-          <h1>Welcome Back</h1>
+          <h1>Welcome back to Trumpus</h1>
+          <p className="auth-subtitle">
+            Sign in to continue your AI chats, return to saved persona conversations, and pick up where you left off.
+          </p>
           <form onSubmit={onSubmit} className="form">
             <label htmlFor="email">E-mail</label>
             <input

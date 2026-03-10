@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { register } from '../lib/api'
 import eagleIcon from '../assets/eagle.png'
+import { trackEvent } from '../lib/analytics'
 
 export default function RegisterPage() {
   const [email, setEmail] = useState('')
@@ -30,6 +31,7 @@ export default function RegisterPage() {
       setLoading(true)
       const data = await register(email, password)
       void data
+      trackEvent('signup_success', { method: 'password' })
       navigate('/chats')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed')
@@ -47,7 +49,14 @@ export default function RegisterPage() {
           <span className="auth-brand-text">Trumpus</span>
         </div>
         <div className="auth-card">
-          <h1>Create Account</h1>
+          <h1>Create your Trumpus account</h1>
+          <p className="auth-subtitle">
+            Join Trumpus to start AI character chats, save your conversation history, and explore persona-based
+            conversations from any device.
+          </p>
+          <p className="auth-subtitle-small">
+            Your account gives you access to saved chats, interactive AI dialogue, and a smoother multi-device experience.
+          </p>
           <form onSubmit={onSubmit} className="form">
             <label>E-mail</label>
             <input
