@@ -446,6 +446,7 @@ Since `.env` and `.env.llm` are in `.gitignore`, here is a complete reference of
 | `OAUTH_REDIRECT_ALLOWLIST` | Allowed OAuth redirect URIs |
 | `MAIL_TEMPLATES_DIR` | Email templates path inside container |
 | `VITE_API_BASE` | Frontend API base (build arg, `/api/v1`) |
+| `NEXT_PUBLIC_GA_MEASUREMENT_ID` | Google Analytics 4 Measurement ID (e.g. `G-FVEPRKT0NE`) |
 
 ---
 
