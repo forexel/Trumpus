@@ -424,6 +424,7 @@ export function clearClientSession() {
 function redirectToLogin() {
   const path = window.location.pathname
   const isPublicAuthPath =
+    path === '/' ||
     path === '/login' ||
     path.startsWith('/forgot') ||
     path.startsWith('/register') ||
