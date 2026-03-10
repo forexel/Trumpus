@@ -11,9 +11,9 @@ services:
     image: postgres:16
     container_name: trumpus_db
     environment:
-      POSTGRES_USER: trumpus
-      POSTGRES_PASSWORD: trumpus
-      POSTGRES_DB: trumpus
+      POSTGRES_USER: ${POSTGRES_USER:-trumpus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trumpus}
+      POSTGRES_DB: ${POSTGRES_DB:-trumpus}
     ports:
       - "5433:5432"
     volumes:
@@ -29,7 +29,7 @@ services:
       - "mail.trumpus.tech:host-gateway"
 
     environment:
-      DATABASE_URL: postgresql://trumpus:trumpus@db:5432/trumpus?sslmode=disable
+      DATABASE_URL: postgresql://${POSTGRES_USER:-trumpus}:${POSTGRES_PASSWORD:-trumpus}@db:5432/${POSTGRES_DB:-trumpus}?sslmode=disable
       PORT: 8000
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: ${JWT_SECRET:-dev-secret}
@@ -71,7 +71,7 @@ services:
       - .env
 
     environment:
-      DATABASE_URL: postgresql://trumpus:trumpus@db:5432/trumpus?sslmode=disable
+      DATABASE_URL: postgresql://${POSTGRES_USER:-trumpus}:${POSTGRES_PASSWORD:-trumpus}@db:5432/${POSTGRES_DB:-trumpus}?sslmode=disable
       REDIS_URL: redis://redis:6379/0
       LLM_BASE: "http://llm:8010"
       RUN_MODE: worker
