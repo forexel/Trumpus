@@ -4996,30 +4996,33 @@ func handleAdminSyntheticGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dialogs := generateSyntheticDialogsBatch(dayStart.Format("2006-01-02"), len(registered), minTurns, maxTurns, rng)
+	extraShortChatsRatio := 0.11
+	extraShortChatsTarget := int(math.Round(float64(len(registered)) * extraShortChatsRatio))
+	if len(registered) >= 10 && extraShortChatsTarget < 1 {
+		extraShortChatsTarget = 1
+	}
+	if extraShortChatsTarget > len(registered) {
+		extraShortChatsTarget = len(registered)
+	}
+	extraShortChatByUser := make(map[int]struct{}, extraShortChatsTarget)
+	if extraShortChatsTarget > 0 {
+		pick := rng.Perm(len(registered))
+		for i := 0; i < extraShortChatsTarget && i < len(pick); i++ {
+			extraShortChatByUser[pick[i]] = struct{}{}
+		}
+	}
+
 	createdChats := 0
 	createdMessages := 0
-	for i := range registered {
-		d := syntheticDialog{
-			Title:   "Synthetic chat",
-			Persona: "Donald Trump",
-			Messages: []syntheticMessage{
-				{Sender: "client", Content: "Hello"},
-				{Sender: "admin", Content: "Hi!"},
-			},
-		}
-		if i < len(dialogs) {
-			d = dialogs[i]
-		}
-		chatAt := syntheticRandomAt(rng, dayStart, dayEnd)
-		chat, err := store.createChatAt(registered[i].client.ID, d.Title, d.Persona, chatAt)
+	createSyntheticChatWithMessages := func(clientID, title, persona string, chatAt time.Time, messages []syntheticMessage) error {
+		chat, err := store.createChatAt(clientID, title, persona, chatAt)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "failed to create synthetic chats"})
-			return
+			return err
 		}
 		createdChats++
 		lastAt := chatAt
 		elapsed := time.Duration(0)
-		for idx, msg := range d.Messages {
+		for idx, msg := range messages {
 			content := strings.TrimSpace(msg.Content)
 			if content == "" {
 				continue
@@ -5039,13 +5042,44 @@ func handleAdminSyntheticGenerate(w http.ResponseWriter, r *http.Request) {
 			}
 			created, err := store.insertMessage(chat.ID, sender, content, at)
 			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "failed to create synthetic messages"})
-				return
+				return err
 			}
 			lastAt = created.CreatedAt
 			createdMessages++
 		}
 		_ = store.updateChatLastMessage(chat.ID, lastAt)
+		return nil
+	}
+
+	for i := range registered {
+		d := syntheticDialog{
+			Title:   "Synthetic chat",
+			Persona: "Donald Trump",
+			Messages: []syntheticMessage{
+				{Sender: "client", Content: "Hello"},
+				{Sender: "admin", Content: "Hi!"},
+			},
+		}
+		if i < len(dialogs) {
+			d = dialogs[i]
+		}
+		chatAt := syntheticRandomAt(rng, dayStart, dayEnd)
+		err := createSyntheticChatWithMessages(registered[i].client.ID, d.Title, d.Persona, chatAt, d.Messages)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "failed to create synthetic chats"})
+			return
+		}
+		if _, ok := extraShortChatByUser[i]; ok {
+			extraAt := syntheticRandomAt(rng, dayStart, dayEnd)
+			shortMessages := []syntheticMessage{
+				{Sender: "client", Content: "Hello"},
+				{Sender: "admin", Content: "Hi"},
+			}
+			if err := createSyntheticChatWithMessages(registered[i].client.ID, "Quick follow-up", d.Persona, extraAt, shortMessages); err != nil {
+				writeJSON(w, http.StatusInternalServerError, jsonMap{"error": "failed to create extra synthetic chats"})
+				return
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, jsonMap{
@@ -5055,6 +5089,7 @@ func handleAdminSyntheticGenerate(w http.ResponseWriter, r *http.Request) {
 		"registrations_target":  registrationsTarget,
 		"registrations_created": len(registered),
 		"chats_created":         createdChats,
+		"extra_chats_target":    extraShortChatsTarget,
 		"messages_created":      createdMessages,
 		"note":                  "Synthetic data is written only to internal DB metrics. External analytics systems are not emulated.",
 	})
