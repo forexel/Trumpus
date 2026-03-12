@@ -54,7 +54,7 @@ const (
 	defaultAccessTTLMinutes = 525600 // 365 days
 	defaultRefreshTTLDays   = 365
 	defaultRateLimitPerMin  = 60
-	defaultAdminTTlHours    = 8
+	defaultAdminTTlHours    = 24 * 365
 	defaultWSTTLMinutes     = 5
 	maxAuthHeaderSize       = 2048
 )

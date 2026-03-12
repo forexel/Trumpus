@@ -81,6 +81,12 @@ async function apiFetch(path: string, options: RequestInit = {}) {
   headers.set('Content-Type', 'application/json')
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' })
   if (!res.ok) {
+    if (res.status === 401) {
+      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+        window.location.href = '/login'
+      }
+      throw new Error('unauthorized')
+    }
     const data = await res.json().catch(() => ({}))
     throw new Error(data.error || `Request failed: ${res.status}`)
   }
