@@ -151,6 +151,14 @@ export default function AnalyticsPage() {
   const [generating, setGenerating] = useState(false)
   const [generateMsg, setGenerateMsg] = useState('')
 
+  function parseVisitorsTarget(raw: string): number | undefined {
+    const digitsOnly = raw.replace(/[^\d]/g, '')
+    if (!digitsOnly) return undefined
+    const parsed = Number.parseInt(digitsOnly, 10)
+    if (!Number.isFinite(parsed) || parsed <= 0) return undefined
+    return parsed
+  }
+
   useEffect(() => {
     let mounted = true
     setLoading(true)
@@ -174,11 +182,30 @@ export default function AnalyticsPage() {
     setGenerating(true)
     setGenerateMsg('')
     try {
-      const parsedVisits = Number.parseInt(visitsTargetInput, 10)
-      const visitsTarget = Number.isFinite(parsedVisits) && parsedVisits > 0 ? parsedVisits : undefined
-      const resp = await generateSyntheticDay(day, visitsTarget)
+      const visitsTarget = parseVisitorsTarget(visitsTargetInput)
+      const chunkLimit = 4000
+      const chunks =
+        visitsTarget && visitsTarget > chunkLimit
+          ? Array.from({ length: Math.ceil(visitsTarget / chunkLimit) }, (_, i) =>
+              i < Math.floor(visitsTarget / chunkLimit) ? chunkLimit : visitsTarget % chunkLimit || chunkLimit
+            )
+          : [visitsTarget]
+
+      let totalVisits = 0
+      let totalRegs = 0
+      let totalChats = 0
+      let totalMessages = 0
+
+      for (const chunk of chunks) {
+        const resp = await generateSyntheticDay(day, chunk)
+        totalVisits += resp.visits_target
+        totalRegs += resp.registrations_created
+        totalChats += resp.chats_created
+        totalMessages += resp.messages_created
+      }
+
       setGenerateMsg(
-        `Synthetic ${resp.day}: visits ${formatNum(resp.visits_target)}, regs ${formatNum(resp.registrations_created)}, chats ${formatNum(resp.chats_created)}, messages ${formatNum(resp.messages_created)}`
+        `Synthetic ${day}: visits ${formatNum(totalVisits)}, regs ${formatNum(totalRegs)}, chats ${formatNum(totalChats)}, messages ${formatNum(totalMessages)}${chunks.length > 1 ? ` (${chunks.length} iterations)` : ''}`
       )
       const updated = await fetchAnalytics(day, from, to)
       setData(updated)
